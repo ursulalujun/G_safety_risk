@@ -11,7 +11,7 @@ from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from openai import OpenAI
 
-from utils import bbox_norm_to_pixel, visulize_bbox
+from utils import bbox_norm_to_pixel, visualize_bbox
 
 PROXY=os.environ['http_proxy'] if 'http_proxy' in os.environ else ""
 
@@ -56,10 +56,13 @@ class QwenSafetyAgent:
         if os.path.exists(model_name): # local model
             self.model_type = "local"
             print(f"Loading model: {model_name}...")
-            self.model = Qwen3VLForConditionalGeneration.from_pretrained(
-                model_name, torch_dtype=torch.bfloat16, device_map="auto"
-            )
-            self.processor = AutoProcessor.from_pretrained(model_name)
+            if 'qwen' in model_name.lower():
+                self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+                    model_name, torch_dtype=torch.bfloat16, device_map="auto"
+                )
+                self.processor = AutoProcessor.from_pretrained(model_name)
+            else:
+                self.model = UnifiedInference("BAAI/RoboBrain2.0-7B")
             print("Model loaded successfully.")
         else: # openai api
             self.model_type = "api"
@@ -222,7 +225,8 @@ class SafetyEvaluator:
         pred_bbox_pixel = bbox_norm_to_pixel(pred_bbox_norm, image_size[0], image_size[1]) if pred_bbox_norm else None
         
         if pred_bbox_pixel is not None:
-            image = visulize_bbox(image_path, pred_bbox_pixel)
+            bbox_list = [{"bounding_box": pred_bbox_pixel, "label": None}]
+            image = visualize_bbox(image, bbox_list)
             save_path = image_path.replace('edit_image', 'check2_image')
 
             if not os.path.exists(os.path.dirname(save_path)):

@@ -10,6 +10,8 @@ from PIL import ImageColor
 import random
 import re
 import requests
+import base64
+from io import BytesIO
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
@@ -67,6 +69,22 @@ def parse_json(response):
     # If all attempts fail, return None or raise an error
     raise ValueError(f"Could not parse response as JSON: {response}")
 
+def image_to_base64(image: Image.Image, fmt='PNG') -> str:
+    """
+    将 PIL Image 对象转换为 Base64 字符串
+    :param image: PIL Image 对象
+    :param fmt: 保存格式 (如 'PNG', 'JPEG')
+    :return: Base64 字符串
+    """
+    output_buffer = BytesIO()
+    # 将图片保存到内存流中，而不是文件
+    image.save(output_buffer, format=fmt)
+    # 获取字节数据
+    byte_data = output_buffer.getvalue()
+    # 编码并转换为字符串
+    base64_str = base64.b64encode(byte_data).decode('utf-8')
+    return base64_str
+
 def bbox_norm_to_pixel(bounding_box, width, height):
     abs_y1 = int(bounding_box[1] / 1000 * height)
     abs_x1 = int(bounding_box[0] / 1000 * width)
@@ -82,10 +100,20 @@ def bbox_norm_to_pixel(bounding_box, width, height):
     formalized_bbox = [abs_x1, abs_y1, abs_x2, abs_y2]
     return formalized_bbox
 
-def visulize_bbox(image_path, bounding_box):
-    # Load the image
-    img = Image.open(image_path)
-    
+def visualize_bbox(img, bboxes): 
+    """
+    Draws bounding boxes and corresponding labels on the given image.
+
+    Args:
+        img (PIL.Image.Image): The source image to draw on.
+        bboxes (list[dict]): A list of dictionaries containing detection info.
+                             Each dict should have:
+                             - 'bounding_box': A list/tuple [x1, y1, x2, y2].
+                             - 'label': A string representing the object class.
+
+    Returns:
+        PIL.Image.Image: The annotated image with bounding boxes drawn.
+    """
     # print(img.size)
     # Create a drawing object
     draw = ImageDraw.Draw(img)
@@ -117,18 +145,22 @@ def visulize_bbox(image_path, bounding_box):
     'silver',
     ] + additional_colors
 
-    color = colors[0]
-    
-    abs_x1, abs_y1, abs_x2, abs_y2 = bounding_box[0], bounding_box[1], bounding_box[2], bounding_box[3]
+    for i in range(len(bboxes)):
+        color = colors[i]
+        bounding_box = bboxes[i]['bounding_box']
+        label = bboxes[i]['label']
+        
+        abs_x1, abs_y1, abs_x2, abs_y2 = bounding_box[0], bounding_box[1], bounding_box[2], bounding_box[3]
 
-    # Draw the bounding box
-    draw.rectangle(
-        ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=3
-    )
+        # Draw the bounding box
+        draw.rectangle(
+            ((abs_x1, abs_y1), (abs_x2, abs_y2)), outline=color, width=3
+        )
 
-    # Draw the text
-    # if "label" in bounding_box:
-    #     draw.text((abs_x1 + 8, abs_y1 + 6), bounding_box["label"], fill=color)
+        # Draw the text
+        if label is not None:
+            draw.text((abs_x1 + 8, abs_y1 + 6), label, fill=color)
+            
     return img
 
 def extract_and_plot_principles(save_path, data_list):

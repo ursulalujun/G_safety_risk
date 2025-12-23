@@ -17,7 +17,7 @@ from tqdm import tqdm
 import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from utils import calculate_diff_bbox, visulize_bbox
+from utils import calculate_diff_bbox, visualize_bbox
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
@@ -126,107 +126,107 @@ def edit_image(edit_plan, model, hazard_type):
     if edit_plan['safety_risk'] is None:
         return 
     
-    for risk in edit_plan['safety_risk']:
-        safety_principle = risk['safety_principle']
-        edit_description = risk['edit_description']
-        label = risk['label']
-        image_path = risk['bbox_image_path']
-        if not os.path.exists(image_path):
-            print(f"[ERROR]: {image_path} not find image!")
-            continue
+    risk = edit_plan['safety_risk']
+    safety_principle = risk['safety_principle']
+    edit_description = risk['edit_description']
+    label = risk['label']
+    image_path = risk['pre_image_path']
+    if not os.path.exists(image_path):
+        print(f"[ERROR]: {image_path} not find image!")
+        return
 
-        with open(image_path, "rb") as image_file:
-            image_base64 = base64.b64encode(image_file.read()).decode("utf-8")
+    with open(image_path, "rb") as image_file:
+        image_base64 = base64.b64encode(image_file.read()).decode("utf-8")
 
-        # bbox_2d = risk['bbox_2d']
+    # bbox_2d = risk['pre_bbox_2d']
 
-        # img = Image.open(image_path)
-        # width, height = img.size
+    # img = Image.open(image_path)
+    # width, height = img.size
 
-        # abs_y1 = int(bbox_2d[1] / 1000 * height)
-        # abs_x1 = int(bbox_2d[0] / 1000 * width)
-        # abs_y2 = int(bbox_2d[3] / 1000 * height)
-        # abs_x2 = int(bbox_2d[2] / 1000 * width)
+    # abs_y1 = int(bbox_2d[1] / 1000 * height)
+    # abs_x1 = int(bbox_2d[0] / 1000 * width)
+    # abs_y2 = int(bbox_2d[3] / 1000 * height)
+    # abs_x2 = int(bbox_2d[2] / 1000 * width)
 
-        # if abs_x1 > abs_x2:
-        #     abs_x1, abs_x2 = abs_x2, abs_x1
+    # if abs_x1 > abs_x2:
+    #     abs_x1, abs_x2 = abs_x2, abs_x1
 
-        # if abs_y1 > abs_y2:
-        #     abs_y1, abs_y2 = abs_y2, abs_y1
+    # if abs_y1 > abs_y2:
+    #     abs_y1, abs_y2 = abs_y2, abs_y1
 
-        # bbox_2d=[abs_x1, abs_y1, abs_x2, abs_y2]
+    # bbox_2d=[abs_x1, abs_y1, abs_x2, abs_y2]
 
-        if hazard_type.lower()=="action_triggered":
-            instruction = risk['instruction']
-            prompt = ACTION_TRIGGERED_HZARD_TEMPLATE.format(safety_principle=safety_principle, 
-                                                        edit_description=edit_description,
-                                                        instruction=instruction, 
-                                                        label=label,
-                                                        crucial_rules=crucial_rules) 
-        else:
-            prompt = ENVIRONMENTAL_HAZARD_TEMPLATE.format(safety_principle=safety_principle, 
-                                                        edit_description=edit_description, 
-                                                        label=label,
-                                                        crucial_rules=crucial_rules)
+    if hazard_type.lower()=="action_triggered":
+        instruction = risk['instruction']
+        prompt = ACTION_TRIGGERED_HZARD_TEMPLATE.format(safety_principle=safety_principle, 
+                                                    edit_description=edit_description,
+                                                    instruction=instruction, 
+                                                    label=label,
+                                                    crucial_rules=crucial_rules) 
+    else:
+        prompt = ENVIRONMENTAL_HAZARD_TEMPLATE.format(safety_principle=safety_principle, 
+                                                    edit_description=edit_description, 
+                                                    label=label,
+                                                    crucial_rules=crucial_rules)
+    
+    if type(model) is str:
+        messages=[
+            {
+                "role": "user",
+                "content":[
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": { "url": f"data:image/png;base64,{image_base64}" }
+                    }
+                ],
+            }
+        ]
         
-        # if type(model) is str:
-        #     messages=[
-        #         {
-        #             "role": "user",
-        #             "content":[
-        #                 {"type": "text", "text": prompt},
-        #                 {
-        #                     "type": "image_url",
-        #                     "image_url": { "url": f"data:image/png;base64,{image_base64}" }
-        #                 }
-        #             ],
-        #         }
-        #     ]
-            
-        #     response = client.chat.completions.create(
-        #         model=model,
-        #         messages=messages
-        #     )
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages
+        )
 
-        #     image_base64 = response.choices[0].message.content # '![image](data:image/png;base64,iVBORw0K...)'
-        #     img_data = image_base64.split("base64,")[1]
-        #     img_data = img_data[:-1].strip()
-        #     image_bytes = base64.b64decode(img_data)
-        # else:
-        #     prompt = SIMPLE_TEMPLATE.format(edit_description=edit_description)
-        #     image = Image.open(image_path).convert("RGB")
-        #     inputs = {
-        #         "image": image,
-        #         "prompt": prompt,
-        #         "generator": torch.manual_seed(0),
-        #         "true_cfg_scale": 4.0,
-        #         "negative_prompt": " ",
-        #         "num_inference_steps": 50,
-        #     }
+        image_base64 = response.choices[0].message.content # '![image](data:image/png;base64,iVBORw0K...)'
+        img_data = image_base64.split("base64,")[1]
+        img_data = img_data[:-1].strip()
+        image_bytes = base64.b64decode(img_data)
+    else:
+        prompt = SIMPLE_TEMPLATE.format(edit_description=edit_description)
+        image = Image.open(image_path).convert("RGB")
+        inputs = {
+            "image": image,
+            "prompt": prompt,
+            "generator": torch.manual_seed(0),
+            "true_cfg_scale": 4.0,
+            "negative_prompt": " ",
+            "num_inference_steps": 50,
+        }
 
-        #     with torch.inference_mode():
-        #         output = pipeline(**inputs)
-        #         output_image = output.images[0]
-        #         # output_image.save("hazard_output.png")
-        #         buffered = BytesIO()
-        #         output_image.save(buffered, format="PNG") 
-        #         img_binary_data = buffered.getvalue() 
-        #         base64_str = base64.b64encode(img_binary_data).decode('utf-8')
-        #         image_bytes = base64.b64decode(base64_str)
+        with torch.inference_mode():
+            output = model(**inputs)
+            output_image = output.images[0]
+            # output_image.save("hazard_output.png")
+            buffered = BytesIO()
+            output_image.save(buffered, format="PNG") 
+            img_binary_data = buffered.getvalue() 
+            base64_str = base64.b64encode(img_binary_data).decode('utf-8')
+            image_bytes = base64.b64decode(base64_str)
 
-        save_path = image_path.replace('check_image', 'edit_image')[:-4]+'__'+str(image_idx)+'.png'
-        risk['edit_image_path']=save_path
-        
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.mkdir(os.path.dirname(save_path))
+    save_path = image_path.replace('check_image', 'edit_image')[:-4]+'__'+str(image_idx)+'.png'
+    risk['edit_image_path']=save_path
+    
+    if not os.path.exists(os.path.dirname(save_path)):
+        os.mkdir(os.path.dirname(save_path))
 
-        # with open(save_path, "wb") as f:
-        #     f.write(image_bytes)
-        
-        image_gen_resized, risk['edition_bbox']=calculate_diff_bbox(image_path, save_path, 80)
-        # cv2.imwrite(save_path, image_gen_resized)
+    with open(save_path, "wb") as f:
+        f.write(image_bytes)
+    
+    image_gen_resized, risk['edition_bbox']=calculate_diff_bbox(image_path, save_path, 80)
+    cv2.imwrite(save_path, image_gen_resized)
 
-        image_idx += 1
+    image_idx += 1
         
     return edit_plan
 
@@ -255,18 +255,17 @@ if __name__ == "__main__":
     with open(f'{args.hazard_type}/edition_plan.json', 'r') as f:
         edit_plan = json.load(f)
 
-    # if 'Qwen' in args.model_name:
-    #     pipeline = QwenImageEditPipeline.from_pretrained(args.model_name)
-    #     print("pipeline loaded")
-    #     pipeline.to(torch.bfloat16)
-    #     pipeline.to("cuda")
-    #     pipeline.set_progress_bar_config(disable=None)
-    #     model = pipeline
-    # else:
-    #     model = args.model_name
-    model = args.model_name
+    if 'Qwen' in args.model_name:
+        pipeline = QwenImageEditPipeline.from_pretrained(args.model_name)
+        print("pipeline loaded")
+        pipeline.to(torch.bfloat16)
+        pipeline.to("cuda")
+        pipeline.set_progress_bar_config(disable=None)
+        model = pipeline
+    else:
+        model = args.model_name
 
-    edit_image(edit_plan[0], model, args.hazard_type)
+    # edit_image(edit_plan[0], model, args.hazard_type)
 
     results = [None] * len(edit_plan)
 

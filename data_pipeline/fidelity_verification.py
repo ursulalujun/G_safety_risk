@@ -1,9 +1,16 @@
+import argparse
+import json
 import torch
+from tqdm import tqdm
+import os
 from PIL import Image
 import hpsv2
 from transformers import BlipProcessor, BlipForQuestionAnswering
 
-class ImageValidator:
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+os.environ['HF_HUB_OFFLINE'] = '1'
+
+class FidelityVerifier:
     def __init__(self, device=None):
         """
         初始化验证器，加载 HPSv2 和 VQA 模型。
@@ -20,8 +27,8 @@ class ImageValidator:
         # 这里使用 BLIP-VQA，它轻量且在 VQA 任务上表现稳定
         # 如果你有 24G+ 显存，可以换成 LLaVA 或 Qwen-VL 以获得更强的推理能力
         print("正在加载 VQA 模型 (BLIP-VQA)...")
-        self.vqa_processor = BlipProcessor.from_pretrained("Salesforce/blip-vqa-base")
-        self.vqa_model = BlipForQuestionAnswering.from_pretrained("Salesforce/blip-vqa-base").to(self.device)
+        self.vqa_processor = BlipProcessor.from_pretrained("../checkpoints/blip-vqa-base")
+        self.vqa_model = BlipForQuestionAnswering.from_pretrained("../checkpoints/blip-vqa-base").to(self.device)
         self.vqa_model.eval()
         
         print("所有模型加载完毕。")
@@ -50,28 +57,26 @@ class ImageValidator:
         except Exception as e:
             return {"passed": False, "reason": f"无法打开图片: {e}"}
 
-        # 定义检查清单：(问题, 期望的回答)
-        # 我们可以检查 "Yes" 的概率，这里简化为直接看模型生成的回答
         checklist = [
             {
                 "question": "Is there any object floating in the air without support?",
                 "bad_answer": "yes",
-                "error_msg": "检测到物体悬浮 (Floating Object)"
+                "error_msg": "Floating Object"
             },
             {
                 "question": "Is the image distorted or deformed?",
                 "bad_answer": "yes",
-                "error_msg": "检测到严重畸变 (Distortion)"
+                "error_msg": "Distortion"
             },
             {
-                "question": "Do the objects have realistic relative sizes?",
-                "bad_answer": "no",
-                "error_msg": "比例可能失调 (Unrealistic Scale)"
+                "question": "Is there any object that have unrealistic relative sizes?",
+                "bad_answer": "yes",
+                "error_msg": "Unrealistic Scale"
             },
             {
                 "question": "Does the person typically have extra limbs or fingers?",
                 "bad_answer": "yes",
-                "error_msg": "肢体结构错误 (Bad Anatomy)"
+                "error_msg": "Bad Anatomy"
             }
         ]
 
@@ -100,19 +105,19 @@ class ImageValidator:
         主流程：结合 HPS 和 VQA
         hps_threshold: 经验值，HPSv2.1 > 0.26 通常质量尚可，要求高可设为 0.28+
         """
-        print(f"\n>>> 正在检查: {image_path}")
+        # print(f"\n>>> 正在检查: {image_path}")
 
         # --- 第一步：HPS 粗筛 ---
-        hps_score = self.score_hps(image_path)
-        print(f"HPS v2.1 分数: {hps_score:.4f}")
+        # hps_score = self.score_hps(image_path)
+        # # print(f"HPS v2.1 分数: {hps_score:.4f}")
         
-        if hps_score < hps_threshold:
-            return {
-                "status": "REJECTED",
-                "stage": "HPS_Filter",
-                "score": hps_score,
-                "detail": "美学/通用质量分数过低"
-            }
+        # if hps_score < hps_threshold:
+        #     return {
+        #         "status": "REJECTED",
+        #         "stage": "HPS_Filter",
+        #         "score": hps_score,
+        #         "detail": "Generic quality scores are too low"
+        #     }
 
         # --- 第二步：VQA 物理精筛 ---
         vqa_result = self.check_physics_vqa(image_path)
@@ -121,42 +126,64 @@ class ImageValidator:
             return {
                 "status": "REJECTED",
                 "stage": "Physics_Filter",
-                "score": hps_score,
+                # "score": hps_score,
                 "detail": vqa_result["reason"]
             }
 
         # --- 通过 ---
         return {
             "status": "ACCEPTED",
-            "score": hps_score,
-            "detail": "图片质量合格且符合常识"
+            # "score": hps_score,
+            "detail": "The images are of good quality and common sense"
         }
+
+def verify_fidelity(meta_file_path, save_path, hazard_type, max_workers):
+    validator = FidelityVerifier()
+    
+    with open(meta_file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    error_list = []
+    for item in tqdm(data):
+        scene_type = item["scene_type"]
+        # print(f"\nProcessing scene: {scene_type}")
+
+        risk = item["safety_risk"]
+        
+        if risk is None:
+            continue
+            
+        img_path = risk["edit_image_path"]
+
+        if os.path.exists(img_path):
+            result = validator.validate_image(img_path, hps_threshold=0.15)
+            if result['status'] == 'REJECTED':
+                risk['fidelity_check'] = f"REJECTED: {result['detail']}"
+            else:
+                risk['fidelity_check'] = "ACCEPTED"
+        else:
+            print(f"Image not found: {img_path}")
+
+    with open(save_path, "w") as f:
+        json.dump(data, f, indent=2)
+    return error_list
 
 # ================= 使用示例 =================
 if __name__ == "__main__":
-    # 实例化验证器 (加载一次模型，多次使用)
-    validator = ImageValidator()
-
-    # 假设你有一些图片路径
-    # 请确保目录下有真实的图片文件
-    test_images = ["test_floating.jpg", "test_good.jpg", "test_bad_hand.jpg"]
-
-    # 模拟运行 (由于这里无法读取你本地文件，请替换为真实路径)
-    # 这里仅做逻辑演示，你需要手动准备几张图来测
-    import os
-    
-    # 创建一个伪造的测试环境，或者你可以直接修改上面的 list
-    # 为了演示代码能跑，我先注释掉实际执行部分，写出调用逻辑
-    
-    """
-    for img_path in test_images:
-        if os.path.exists(img_path):
-            result = validator.validate_image(img_path, hps_threshold=0.25)
-            print(f"最终结果: {result['status']}")
-            print(f"详情: {result['detail']}")
-            print("-" * 30)
-        else:
-            print(f"找不到文件: {img_path}")
-    """
-    
-    print("\n提示：请将 'test_images' 列表替换为你真实的图片路径即可运行检测。")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--hazard_type', 
+        type=str, 
+        required=True, 
+        choices=['action_triggered', 'environmental'],
+        help='Must be "action_triggered" or "environmental"'
+    )
+    parser.add_argument(
+        '--max_workers', 
+        type=int, 
+        default=24,
+    )
+    args = parser.parse_args()
+    meta_file_path = os.path.join(args.hazard_type, "edition_info.json")
+    save_path = os.path.join(args.hazard_type, "annotation_info.json")
+    verify_fidelity(meta_file_path, save_path, args.hazard_type, args.max_workers)
