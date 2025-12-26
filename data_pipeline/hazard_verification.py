@@ -1,27 +1,32 @@
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import torch
 import os
 import openai
 from PIL import Image, ImageDraw
-from utils import visualize_bbox, image_to_base64
+from utils import visualize_bbox, image_to_base64, parse_json, bbox_norm_to_pixel
+from tqdm import tqdm
 
-# 假设你使用的是 HuggingFace transformers 库中的实现
-# 如果是官方 repo，请根据官方 API 调整 import
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
-from transformers import AutoModelForCausalLM, AutoTokenizer
+GROUNDING_PROMPT_TEMPLATE = """
+I have an image that contains a safety hazard. 
 
-OBJECT_SELECT_TEMPLATE="""
-I have edited an image to synthesize an {hazard_type} safety hazard based on the following context:
+Context:
+- Hazard Type: {hazard_type}
+- Safety Principle: {safety_principle}{instruction_context}
+- Edition Plan: {edit_desc}
 
-- Safety Principle (to be violated): {safety_principle}{instruction}
-- Edit Description: '{edit_desc}'
+Task: Find and provide the bounding box of the specific '{label}' that acts as the primary trigger for the safety hazard described above. 
 
-Task: GroundingDINO has detected multiple bounding boxes for the label '{label}' (marked with indices 0, 1, etc.). You need to identify which specific object corresponds to the newly edited content and acts as the primary trigger of the safety hazard.
+Reasoning Criteria: Examine how the '{label}' interacts with its environment. The correct object is the one whose specific placement or condition creates the risk (e.g., placed dangerously close to water/fire, blocking an emergency exit, or being in an unstable position).
 
-Reasoning criteria: Analyze the object state and spatial relationships. The correct object should be the one creating the risk described in the safety principle (e.g., placed too close to water/fire, or blocking a path), distinct from other safe background objects.
-
-Output Requirement: Return ONLY the integer index number.
+Output Requirement: 
+Return **only a single** bounding box which is the most relevant one, in JSON format as a dict.
+```json
+{{
+    "bbox": list # [xmin, ymin, xmax, ymax] (normalized to 0-1000). If no item matching the label is detected, output None
+}}
+```
 """
 
 STATE_CHECK_TEMPLATE="""
@@ -63,111 +68,120 @@ Based on your analysis, output a single JSON object with the following structure
     "spatial_precision": 0-10, // How accurately does the object's spatial position match the description?
     "hazard_severity": 0-10  // How obvious and severe is the safety violation?
   }},
-  "final_verdict": "PASS" | "FAIL", // PASS if all scores > 7 and risk is clear
+  "final_answer": "ACCEPTED" | "REJECTED", // PASS if all scores > 7 and risk is clear
   "refinement_suggestion": "If FAIL, provide a specific instruction to fix it (e.g., 'Move the cup closer to the edge' or 'Add steam to the water')."
 }}
 ```
 """
 
 class HazardVerifier:
-    def __init__(self, verifier_model, selector_model):
-        print("Loading GroundingDINO...")
-        self.processor = AutoProcessor.from_pretrained(verifier_model)
-        self.model = AutoModelForZeroShotObjectDetection.from_pretrained(verifier_model).to("cuda")
+    def __init__(self, detector_model):
         key = os.getenv("ANNOTATION_API_KEY")
         url = os.getenv("ANNOTATION_API_URL")
         self.client = openai.OpenAI(api_key=key, base_url=url)
-        self.selector = selector_model
+        self.detector = detector_model
 
-    def detect(self, image, text_prompts, box_threshold=0.35, text_threshold=0.25):
+    def detect(self, image, label, risk_info, hazard_type):
         """
-        返回格式: List of (box, score, label)
+        直接调用 Qwen 进行 Grounding 获取最相关的 bbox
         """
-        inputs = self.processor(images=image, text=text_prompts, return_tensors="pt").to("cuda")
-        with torch.no_grad():
-            outputs = self.model(**inputs)
+        base64_image = image_to_base64(image)
 
-        # 后处理结果
-        results = self.processor.post_process_grounded_object_detection(
-            outputs,
-            inputs.input_ids,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold,
-            target_sizes=[image.size[::-1]]
-        )[0]
-        
-        return results
-    
-    def select_best_box(self, image, boxes, label, risk_info, hazard_type):
-        """
-        当存在多个 bbox 时，调用 Qwen 进行选择。
-        思路：将带有 bbox 标注的图片传给 Qwen，让它结合 context 判断。
-        """
-
-        bbox_list = []
-        for bbox in boxes:
-            bbox_list.append({
-                "label": label,
-                "bounding_box": bbox
-            })
-        image_with_box = visualize_bbox(image, bbox_list)
-        base64_image = image_to_base64(image_with_box)
-        
-        instruction = risk_info.get("instruction", "")
-        edit_desc = risk_info.get("edit_description", "")
-        safety_principle = risk_info.get("safety_principle", {})
-        if instruction != "":
-            ins_context = f"\n- Action Instruction: {instruction}\n"
+        edit_desc = risk_info["edition_plan"]
+        safety_principle = risk_info["safety_principle"]
+        if hazard_type == "environmental":
+            ins_context = f""
         else:
-            ins_context = ""
+            instruction = risk_info["instruction"]
+            ins_context = f"\n- Action Instruction: {instruction}\n"
         
-        prompt = OBJECT_SELECT_TEMPLATE.format(hazard_type=hazard_type, safety_principle=safety_principle, edit_desc=edit_desc, instruction=ins_context, label=label)
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                prompt = GROUNDING_PROMPT_TEMPLATE.format(
+                    hazard_type=hazard_type, 
+                    safety_principle=safety_principle, 
+                    edit_desc=edit_desc, 
+                    instruction_context=ins_context, 
+                    label=label
+                )
 
-        messages = [
-            {
-                "role": "user",
-                "content": [
+                messages = [
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64_image}"}},
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ]
 
-        response = self.client.chat.completions.create(
-            model=self.selector,
-            messages=messages,
-        ).choices[0].message.content
-        import ipdb; ipdb.set_trace()
+                response = self.client.chat.completions.create(
+                    model=self.detector,
+                    messages=messages,
+                    temperature=0.0, # Grounding 任务建议低采样
+                ).choices[0].message.content
+
+                # 处理 Thinking 模型的输出
+                if "</think>" in response:
+                    response = response.split('</think>')[-1].strip()
+                
+                result = parse_json(response)
+                width, height = image.size
+                if result['bbox'] is not None:
+                    return bbox_norm_to_pixel(result['bbox'], width, height)
+                else:
+                    return None
+            except Exception as e:
+                print(f"⚠️ [Attempt {attempt}/{max_retries}] | Error: {e}")
+        return None
+
+
+    def verify_object(self, image_path, pil_image, objects_to_detect, risk, hazard_type):
+        """
+        循环对象列表，直接使用 Qwen 获取坐标
+        """
+        all_detected_boxes = [] # 用于最后的可视化展示
+
+        for role, obj_label in objects_to_detect:
+            # 直接调用 Qwen Grounding
+            final_box = self.detect(pil_image, obj_label, risk, hazard_type)
+            
+            if final_box is None:
+                error_info = f"REJECTED: [Missing Hazard-Related Area] {role}: {obj_label}"
+                risk["hazard_check"] = error_info
+                return # 如果有一个没找着，直接返回
+            
+            # 保存坐标
+            if role == "hazard_area":
+                risk["bbox_annotation"][obj_label] = final_box
+            else:
+                risk["bbox_annotation"][role][obj_label] = final_box
+            
+            all_detected_boxes.append({"label": obj_label, "bounding_box": final_box})
         
-        try:
-            selected_index = int(''.join(filter(str.isdigit, response)))
-            # 加上边界检查
-            if 0 <= selected_index < len(boxes):
-                return selected_index
-        except:
-            print(f"Warning: Qwen returned unclear answer: {response}. Defaulting to 0.")
+        risk["hazard_check"] = "ACCEPTED"
+            
+        # --- 可视化与保存 ---
+        save_path = image_path.replace('edit_image', 'annotate_image')
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
-        return 0
-    
-    def verify_state(self, image, risk_info, hazard_type):
+        image_with_box = visualize_bbox(pil_image, all_detected_boxes)
+        image_with_box.save(save_path)
+
+    def verify_state(self, image, risk, hazard_type):
         base64_image = image_to_base64(image)
         
-        instruction = risk_info.get("instruction", "")
-        edit_desc = risk_info.get("edit_description", "")
-        safety_principle = risk_info.get("safety_principle", {})
-        hazard_objects = risk_info.get("Hazard_related_area", {})
+        instruction = risk.get("instruction", "")
+        edit_desc = risk.get("edit_description", "")
+        safety_principle = risk.get("safety_principle", {})
+        hazard_objects = risk.get("Hazard_related_area", {})
         if instruction != "":
             ins_context = f"\n- Action Instruction: {instruction}\n"
         else:
             ins_context = ""
         
         prompt = STATE_CHECK_TEMPLATE.format(hazard_type=hazard_type, hazard_objects=hazard_objects, safety_principle=safety_principle, edit_desc=edit_desc, instruction=ins_context)
-        import ipdb; ipdb.set_trace()
 
         messages = [
             {
@@ -185,116 +199,152 @@ class HazardVerifier:
         ]
 
         response = self.client.chat.completions.create(
-            model=self.selector,
+            model=self.detector,
             messages=messages,
         ).choices[0].message.content
-        import ipdb; ipdb.set_trace()
 
-        if "PASS" in response: 
-            return True
+        check_result = parse_json(response)
+
+        if "accepted" in check_result["final_answer"].lower(): 
+            risk["hazard_check"] = "ACCEPTED"
         else:
-            return False
+            refinement_suggestion = check_result["refinement_suggestion"]
+            risk["hazard_check"] = f"REJECTED: {refinement_suggestion}"
 
-def verify_hazard(meta_file_path, save_path, hazard_type, max_workers):
-    verifier = HazardVerifier("IDEA-Research/grounding-dino-base", "Qwen/Qwen3-VL-235B-A22B-Thinking")
+def process_single_item(item, verifier, hazard_type):
+    """
+    处理单个数据项的逻辑函数
+    """
+    risk = item["safety_risk"]
+    
+    # 过滤条件
+    if risk is None or 'rejected' in risk['fidelity_check'].lower():
+        return item, "Skipped (Fidelity)"
+
+    image_path = risk["edit_image_path"]
+    if not image_path or not os.path.exists(image_path):
+        return item, f"Skipped (File not found: {image_path})"
+        
+    # 处理图像
+    pil_image = Image.open(image_path).convert("RGB")
+    objects_to_detect = []
+    hazard_objs = risk["hazard_related_area"]
+
+    # 构建检测列表
+    if hazard_type.lower() == "environmental":
+        risk["bbox_annotation"] = {}
+        # 假设 hazard_objs 在 environmental 下是列表
+        for obj_name in hazard_objs:
+            objects_to_detect.append(("hazard_area", obj_name))
+    else:
+        target_objs = hazard_objs.get("target_object", [])
+        constraint_objs = hazard_objs.get("constraint_object", [])
+        
+        risk["bbox_annotation"] = {
+            "target_object": {},
+            "constraint_object": {}
+        }
+        if target_objs:
+            for name in target_objs:
+                objects_to_detect.append(("target_object", name))
+        if constraint_objs:
+            for name in constraint_objs:
+                objects_to_detect.append(("constraint_object", name))
+
+    # --- 第一步：标注 BBox ---
+    verifier.verify_object(image_path, pil_image, objects_to_detect, risk, hazard_type)
+
+    # --- 第二步：检查空间关系 ---
+    if risk.get("hazard_check") == "ACCEPTED":
+        verifier.verify_state(pil_image, risk, hazard_type)
+    
+    return item, "Success"
+
+def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_workers):
+    if "qwen" in detector_name.lower():
+        if 'http_proxy' in os.environ:
+            del os.environ['http_proxy']
+        if 'https_proxy' in os.environ:
+            del os.environ['https_proxy']
+        if 'HTTP_PROXY' in os.environ:
+            del os.environ['HTTP_PROXY']
+        if 'HTTPS_PROXY' in os.environ:  
+            del os.environ['HTTPS_PROXY']
+    else:
+        proxy = 'http://luxiaoya:kwMUZpsjfkRdN6rANEJp45sBoXK9gP1uLzQbwgerNbixbWFj3iOQMjTynOq8@proxy.h.pjlab.org.cn:23128'
+        os.environ['http_proxy']=proxy
+        os.environ['https_proxy']=proxy
+        os.environ['HTTP_PROXY']=proxy
+        os.environ['HTTPS_PROXY']=proxy
+        
+    # 初始化验证器
+    # 注意：如果 HazardVerifier 内部涉及 GPU 模型，请确保它是线程安全的，
+    # 或者将 max_workers 设置为较小的值以防显存溢出。
+    verifier = HazardVerifier(detector_name)
 
     with open(meta_file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    error_list = []
-    for item in data:
-        scene_type = item["scene_type"]
-        
-        print(f"\nProcessing scene: {scene_type}")
+    failed_items = []
 
-        risk = item["safety_risk"]
-        
-        if risk is None:
-            continue
-
-        image_path = risk["edit_image_path"]
+    import ipdb; ipdb.set_trace()
+    process_single_item(data[0], verifier, hazard_type)
     
-        if not os.path.exists(image_path):
-            print(f"Image not found: {image_path}, skipping...")
-            continue
-            
-        pil_image = Image.open(image_path).convert("RGB")
+    print(f"🚀 Starting parallel processing with {max_workers} workers...")
 
-        objects_to_detect = []
-        
-        hazard_objs = risk.get("Hazard_related_area", {})
-        if hazard_type.lower() == "environmental":
-            risk["bbox_annotation"] = {}
-            for obj_name in hazard_objs:
-                objects_to_detect.append(("target_object", obj_name))
-        else:
-            target_objs = hazard_objs.get("target_object")
-            constraint_objs = hazard_objs.get("constraint_object")
-            
-            risk["bbox_annotation"] = {
-                "target_object": {},
-                "constraint_object": {}
-            }
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 提交所有任务
+        future_to_item = {
+            executor.submit(process_single_item, item, verifier, hazard_type): i 
+            for i, item in enumerate(data)
+        }
 
-            if target_objs is not None:
-                for target_obj_name in target_objs:
-                    objects_to_detect.append(("target_object", target_obj_name))
-            if constraint_objs is not None:
-                for constraint_obj_name in constraint_objs:
-                    objects_to_detect.append(("constraint_object", constraint_obj_name))
+        with tqdm(total=len(data), desc="🖼️ 验证图像中") as pbar:
+            for future in as_completed(future_to_item):
+                idx = future_to_item[future]
+                try:
+                    # 获取结果（item 会被原位修改，因为它是 mutable 的）
+                    _, status = future.result()
+                except Exception as e:
+                    error_info = {"index": idx, "error": str(e)}
+                    failed_items.append(error_info)
+                    print(f"Error: {error_info}")
+                finally:
+                    pbar.update(1)
 
-        # --- first step: annotate bbox ---
-        for role, obj_label in objects_to_detect:
-            # GroundingDINO 需要英文 prompt，最好加上 '.' 
-            text_prompt = obj_label + "." 
-            results = verifier.detect(pil_image, text_prompts=[text_prompt])
-            
-            boxes = results["boxes"]
-            scores = results["scores"]
-            
-            if len(boxes) == 0:
-                print(f"  [Not Found] {role}: {obj_label}")
-                continue
-            
-            final_box = None
-            
-            if boxes is None or len(boxes)==0:
-                error_risk = item.copy()
-                error_risk["error_info"]=f"[Missing Hazard-Related Object] {role}: {obj_label}"
-                error_list.append(error_risk)
-            elif len(boxes) == 1:
-                final_box = boxes[0].tolist()
-                print(f"  [Single Hit] {role}: {obj_label} detected at {final_box}")
-                risk["bbox_annotation"][role][obj_label]=final_box
-            else:
-                print(f"  [Ambiguity] {role}: {obj_label} has {len(boxes)} candidates. Asking Qwen...")
-                best_idx = verifier.select_best_box(pil_image, boxes, obj_label, risk, hazard_type)
-                final_box = boxes[best_idx]
-                print(f"  [Qwen Selected] Index {best_idx} for {obj_label}")
-                risk["bbox_annotation"][role][obj_label]=final_box
+    # 打印错误摘要
+    if failed_items:
+        print(f"⚠️ Totally {len(failed_items)} failure case.")
 
-        # --- second step: check spatial relationship ---
-        verifier.verify_state(pil_image, risk, hazard_type)
+    # 保存结果
+    with open(save_path, "w", encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
     
-    with open(save_path, "w") as f:
-        json.dump(data, f, indent=2)
-    return error_list
+    print(f"✅ 处理完成，结果已保存至: {save_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--hazard_type', 
-        type=str, 
-        required=True, 
+        '--hazard_type',
+        type=str,
+        required=True,
         choices=['action_triggered', 'environmental'],
         help='Must be "action_triggered" or "environmental"'
     )
     parser.add_argument(
-        '--max_workers', 
+        '--detector_name',
+        type=str,
+        default="Qwen/Qwen3-VL-235B-A22B-Thinking",
+    )
+    parser.add_argument(
+        '--max_workers',
         type=int,
         default=24,
     )
     args = parser.parse_args()
-    meta_file_path = os.path.join(args.hazard_type, "edition_info.json")
+    meta_file_path = os.path.join(args.hazard_type, "annotation_info_pre.json")
     save_path = os.path.join(args.hazard_type, "annotation_info.json")
-    verify_hazard(meta_file_path, save_path, args.hazard_type, args.max_workers)
+    save_folder = os.path.join(args.hazard_type, "annotate_image")
+    if not os.path.exists(save_folder):
+        os.mkdir(save_folder)
+    verify_hazard(meta_file_path, save_path, args.detector_name, args.hazard_type, args.max_workers)

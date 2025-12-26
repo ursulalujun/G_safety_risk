@@ -1,189 +1,189 @@
 import argparse
 import json
-import torch
-from tqdm import tqdm
 import os
-from PIL import Image
-import hpsv2
-from transformers import BlipProcessor, BlipForQuestionAnswering
-
-os.environ['TRANSFORMERS_OFFLINE'] = '1'
-os.environ['HF_HUB_OFFLINE'] = '1'
+import base64
+from tqdm import tqdm
+from openai import OpenAI  # Recommended SDK for calling Qwen-VL APIs
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class FidelityVerifier:
-    def __init__(self, device=None):
+    def __init__(self):
         """
-        初始化验证器，加载 HPSv2 和 VQA 模型。
+        Initialize the verifier and configure the OpenAI-compatible API client.
         """
-        self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"正在使用设备: {self.device} 加载模型...")
-
-        # 1. 加载 HPS v2.1 (用于通用质量评分)
-        # HPSv2 会自动下载模型 checkpoints
-        print("正在加载 HPS v2.1...")
-        self.hps_model_id = "hpsv2.1" 
-
-        # 2. 加载 VQA 模型 (用于物理/逻辑检测 - VQAScore 核心)
-        # 这里使用 BLIP-VQA，它轻量且在 VQA 任务上表现稳定
-        # 如果你有 24G+ 显存，可以换成 LLaVA 或 Qwen-VL 以获得更强的推理能力
-        print("正在加载 VQA 模型 (BLIP-VQA)...")
-        self.vqa_processor = BlipProcessor.from_pretrained("../checkpoints/blip-vqa-base")
-        self.vqa_model = BlipForQuestionAnswering.from_pretrained("../checkpoints/blip-vqa-base").to(self.device)
-        self.vqa_model.eval()
-        
-        print("所有模型加载完毕。")
-
-    def score_hps(self, image_path, prompt="high quality image, realistic"):
-        """
-        第一层：使用 HPS v2.1 进行打分
-        """
-        # HPSv2 库通常接受图片路径列表
-        try:
-            # result 是一个包含分数的列表
-            result = hpsv2.score([image_path], prompt, hps_version="v2.1")
-            score = float(result[0])
-            return score
-        except Exception as e:
-            print(f"HPS 打分出错: {e}")
-            return -1.0
+        api_key = os.environ['VERIFY_API_KEY']
+        base_url = os.environ['VERIFY_API_URL']
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+        )
+        self.model_name = "Qwen/Qwen3-VL-235B-A22B-Thinking" 
+        print(f"Qwen-VL API Verifier initialized.")
 
     def check_physics_vqa(self, image_path):
         """
-        第二层：使用 VQA 进行物理和常识检测 (VQAScore 逻辑)
-        定义一系列负面检测问题，如果回答是肯定的，说明有问题。
+        Perform a comprehensive physical and common-sense inspection using Qwen3-VL's 
+        reasoning capabilities in a single API call.
         """
         try:
-            raw_image = Image.open(image_path).convert('RGB')
+            with open(image_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode('utf-8')
         except Exception as e:
-            return {"passed": False, "reason": f"无法打开图片: {e}"}
+            return {"passed": False, "reason": f"Failed to read image: {e}"}
 
-        checklist = [
+        # Constructing the system and user prompts for the Vision-Language Model
+        system_prompt = (
+            "You are a professional AI Image Quality Auditor. "
+            "Analyze the image for physical logic, structural integrity, and biological accuracy."
+        )
+        
+        user_content = [
             {
-                "question": "Is there any object floating in the air without support?",
-                "bad_answer": "yes",
-                "error_msg": "Floating Object"
+                "type": "text",
+                "text": (
+                    "Please inspect this image for the following quality issues:\n"
+                    "1. Floating Objects: Are there objects hovering without support or logical contact?\n"
+                    "2. Distortion: Is the image or its geometry distorted, deformed, or melted?\n"
+                    "3. Unrealistic Scale: Are relative sizes of objects illogical (e.g., a giant cat)?\n"
+                    "4. Bad Anatomy: Does the person have extra limbs, fused fingers, or broken joints?\n\n"
+                    "Output Format: For each issue found, provide: [Error Message] - [Reasoning (Error Categoty)]. "
+                    "If the image is physically consistent and has no issues, output only 'PASSED'."
+                )
             },
             {
-                "question": "Is the image distorted or deformed?",
-                "bad_answer": "yes",
-                "error_msg": "Distortion"
-            },
-            {
-                "question": "Is there any object that have unrealistic relative sizes?",
-                "bad_answer": "yes",
-                "error_msg": "Unrealistic Scale"
-            },
-            {
-                "question": "Does the person typically have extra limbs or fingers?",
-                "bad_answer": "yes",
-                "error_msg": "Bad Anatomy"
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
             }
         ]
 
-        issues = []
-        
-        for item in checklist:
-            question = item["question"]
-            inputs = self.vqa_processor(raw_image, question, return_tensors="pt").to(self.device)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.1,
+            )
             
-            with torch.no_grad():
-                out = self.vqa_model.generate(**inputs, max_new_tokens=20)
-                answer = self.vqa_processor.decode(out[0], skip_special_tokens=True).lower().strip()
+            analysis_result = response.choices[0].message.content
             
-            # 简单的逻辑判定
-            # 注意：BLIP 有时会回答 "yes it is" 等，所以用 in 判定
-            if item["bad_answer"] in answer:
-                issues.append(f"{item['error_msg']} (Q: {question}, A: {answer})")
+            # Logic: If 'PASSED' is in the response and the response is short, consider it valid.
+            if "thinking" in self.model_name.lower():
+                analysis_result = analysis_result.split("</think>")[-1]
+            if "PASSED" in analysis_result.upper():
+                return {"passed": True, "reason": "Consistent with common sense"}
+            else:
+                return {"passed": False, "reason": analysis_result.strip()}
 
-        if len(issues) > 0:
-            return {"passed": False, "reason": "; ".join(issues)}
-        else:
-            return {"passed": True, "reason": "符合物理常识"}
+        except Exception as e:
+            print(f"API Call Error: {e}")
+            return {"passed": False, "reason": f"API Error: {str(e)}"}
 
-    def validate_image(self, image_path, hps_threshold=0.26):
+    def validate_image(self, image_path):
         """
-        主流程：结合 HPS 和 VQA
-        hps_threshold: 经验值，HPSv2.1 > 0.26 通常质量尚可，要求高可设为 0.28+
+        Main workflow: Use Qwen-VL to screen the image for fidelity issues.
         """
-        # print(f"\n>>> 正在检查: {image_path}")
-
-        # --- 第一步：HPS 粗筛 ---
-        # hps_score = self.score_hps(image_path)
-        # # print(f"HPS v2.1 分数: {hps_score:.4f}")
-        
-        # if hps_score < hps_threshold:
-        #     return {
-        #         "status": "REJECTED",
-        #         "stage": "HPS_Filter",
-        #         "score": hps_score,
-        #         "detail": "Generic quality scores are too low"
-        #     }
-
-        # --- 第二步：VQA 物理精筛 ---
         vqa_result = self.check_physics_vqa(image_path)
         
         if not vqa_result["passed"]:
             return {
                 "status": "REJECTED",
-                "stage": "Physics_Filter",
-                # "score": hps_score,
+                "stage": "Qwen_VL_Filter",
                 "detail": vqa_result["reason"]
             }
 
-        # --- 通过 ---
         return {
             "status": "ACCEPTED",
-            # "score": hps_score,
-            "detail": "The images are of good quality and common sense"
+            "detail": "The image is of good quality and follows physical logic"
         }
 
+def process_single_item(validator, item):
+    """
+    Helper function to process one JSON item. 
+    This is the target function for the ThreadPoolExecutor.
+    """
+    risk = item.get("safety_risk")
+    if risk is None:
+        return item
+        
+    img_path = risk.get("edit_image_path")
+
+    if img_path and os.path.exists(img_path):
+        result = validator.validate_image(img_path)
+        if result['status'] == 'REJECTED':
+            risk['fidelity_check'] = f"REJECTED: {result['detail']}"
+        else:
+            risk['fidelity_check'] = "ACCEPTED"
+    else:
+        risk['fidelity_check'] = "ERROR: Image not found"
+    
+    return item
+
 def verify_fidelity(meta_file_path, save_path, hazard_type, max_workers):
+    """
+    Load JSON data, process images through the verifier, and save results.
+    """
+    if 'http_proxy' in os.environ:
+        del os.environ['http_proxy']
+    if 'https_proxy' in os.environ:
+        del os.environ['https_proxy']
+    if 'HTTP_PROXY' in os.environ:
+        del os.environ['HTTP_PROXY']
+    if 'HTTPS_PROXY' in os.environ:  
+        del os.environ['HTTPS_PROXY']
     validator = FidelityVerifier()
     
     with open(meta_file_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    error_list = []
-    for item in tqdm(data):
-        scene_type = item["scene_type"]
-        # print(f"\nProcessing scene: {scene_type}")
+    print(f"Starting verification for {hazard_type}...")
 
-        risk = item["safety_risk"]
+    updated_data = []
+
+    import ipdb; ipdb.set_trace()
+    process_single_item(validator, data[0])
+
+    # Use ThreadPoolExecutor for concurrent API calls
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Map the function to the data
+        future_to_item = {executor.submit(process_single_item, validator, item): item for item in data}
         
-        if risk is None:
-            continue
-            
-        img_path = risk["edit_image_path"]
+        with tqdm(total=len(data), desc="🖼️ Processing Images") as pbar:
+            for future in as_completed(future_to_item):
+                try:
+                    # Collect the result as they complete
+                    result_item = future.result()
+                    updated_data.append(result_item)
+                except Exception as e:
+                    print(f"\nWorker error: {e}")
+                finally:
+                    pbar.update(1)
 
-        if os.path.exists(img_path):
-            result = validator.validate_image(img_path, hps_threshold=0.15)
-            if result['status'] == 'REJECTED':
-                risk['fidelity_check'] = f"REJECTED: {result['detail']}"
-            else:
-                risk['fidelity_check'] = "ACCEPTED"
-        else:
-            print(f"Image not found: {img_path}")
+    # Save the updated annotations back to a JSON file
+    with open(save_path, "w", encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
-    with open(save_path, "w") as f:
-        json.dump(data, f, indent=2)
-    return error_list
+    print(f"Verification complete. Results saved to {save_path}")
 
-# ================= 使用示例 =================
+# ================= Execution Entry Point =================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Image Fidelity Verification using Qwen-VL API")
     parser.add_argument(
         '--hazard_type', 
         type=str, 
         required=True, 
-        choices=['action_triggered', 'environmental'],
-        help='Must be "action_triggered" or "environmental"'
+        help='The category of hazard to process'
     )
     parser.add_argument(
         '--max_workers', 
         type=int, 
         default=24,
     )
+
     args = parser.parse_args()
+    
+    # Define file paths based on the hazard type provided
     meta_file_path = os.path.join(args.hazard_type, "edition_info.json")
     save_path = os.path.join(args.hazard_type, "annotation_info.json")
     verify_fidelity(meta_file_path, save_path, args.hazard_type, args.max_workers)

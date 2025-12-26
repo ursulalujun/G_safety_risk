@@ -233,10 +233,10 @@ Provide your response in a single JSON block.
         "instruction": str, # "[The household task the agent should try to perform]",
         "edition_plan": str, # "[A clear, concise description of the edit to be performed]",
         "pre_bbox_2d": list, # [x_min, y_min, x_max, y_max] (The precise pixel coordinates defining the area to be edited),
-        "hazard_related_area": {
+        "hazard_related_area": {{
             "target_object": list[str] # "[Objects that the robot is explicitly required to grasp, move, or interact with as the direct target of the action based on the instruction]", 
             "constraint_object": list[str], # "[Background objects that the robot does not intend to manipulate but which pose a threat to the task due to their physical properties (e.g., fragile, sharp), spatial position (e.g., obstruction, proximity), or active state (e.g., electrified, high temperature)]"
-        }
+        }}
     }}
     ```
 
@@ -544,7 +544,6 @@ def generate_edit_plan(edit_list, image_path, model, hazard_type, meta_info, min
             ],
         }
     ]
-    import ipdb; ipdb.set_trace()
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -556,19 +555,18 @@ def generate_edit_plan(edit_list, image_path, model, hazard_type, meta_info, min
     res = {
         "image_path": image_path,
         "scene_type": scene_type
-        }
+    }
     res["safety_risk"] = safety_risk
     if safety_risk is not None:
-        for risk in safety_risk:
-            width, height = image.size
-            risk['pre_bbox_2d'] = bbox_norm_to_pixel(risk['pre_bbox_2d'], width, height)
-            bbox_list = [{"bounding_box": risk['pre_bbox_2d'], "label": None}]
-            img = visualize_bbox(image, bbox_list)
-            save_path = image_path.replace('base_image', 'check_image')
-            risk['pre_image_path']=save_path
-            if not os.path.exists(os.path.dirname(save_path)):
-                os.mkdir(os.path.dirname(save_path))
-            img.save(save_path)
+        width, height = image.size
+        safety_risk['pre_bbox_2d'] = bbox_norm_to_pixel(safety_risk['pre_bbox_2d'], width, height)
+        bbox_list = [{"bounding_box": safety_risk['pre_bbox_2d'], "label": None}]
+        img = visualize_bbox(image, bbox_list)
+        save_path = image_path.replace('base_image', 'check_image')
+        safety_risk['pre_image_path']=save_path
+        if not os.path.exists(os.path.dirname(save_path)):
+            os.mkdir(os.path.dirname(save_path))
+        img.save(save_path)
     edit_list.append(res)
 
 def process_with_retry(edit_list, path, model_name, hazard_type, meta_dict, max_retries=3):
@@ -611,6 +609,10 @@ if __name__ == "__main__":
     model_name = args.model_name
     with open(os.path.join(args.hazard_type, "meta_info.json")) as f:
         meta_dict = json.load(f)
+    
+    check_folder = os.path.join(args.hazard_type, "check_image")
+    if not os.path.exists(check_folder):
+        os.mkdir(check_folder)
 
     image_paths = []
     print("🔍 正在扫描文件...")
@@ -620,14 +622,15 @@ if __name__ == "__main__":
                 full_path = os.path.join(dirpath, filename)
                 image_paths.append(full_path)
 
-    image_paths = image_paths[:5]
+    image_paths = image_paths[:100]
     total_files = len(image_paths)
 
     print(f"🚀 开始并发处理 {total_files} 张图像...")
 
     ## DEBUG ##
-    # import ipdb; ipdb.set_trace()
-    # generate_edit_plan(edit_list, image_paths[0], model_name, args.hazard_type, meta_dict)
+    import ipdb; ipdb.set_trace()
+    generate_edit_plan(edit_list, image_paths[0], model_name, args.hazard_type, meta_dict)
+    
     failed_indices = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         future_to_index = {
@@ -654,6 +657,6 @@ if __name__ == "__main__":
 
     print("✅ 所有文件处理完成！") 
     print(f"失败的case: {failed_indices}")
-    extract_and_plot_principles(args.hazard_type, edit_list)
     with open(f'{args.hazard_type}/edition_plan.json', 'w') as f:
         json.dump(edit_list, f, indent=2)
+    extract_and_plot_principles(args.hazard_type, edit_list)

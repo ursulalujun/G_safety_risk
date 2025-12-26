@@ -169,24 +169,23 @@ def extract_and_plot_principles(save_path, data_list):
     # 2. 遍历列表提取编号
     for item in data_list:
         # 获取 safety_risk 列表 (防止某些项没有 key)
-        risks = item.get("safety_risk", [])
-        if risks is None:
+        risk = item.get("safety_risk", {})
+        if risk is None:
             continue
-        for risk in risks:
-            principle_text = risk.get("safety_principle", "")
-            
-            if principle_text:
-                # 逻辑：通过 '.' 分割字符串，取第一部分，并去除首尾空格
-                # 例如 "31. Slipping..." -> 分割成 ["31", " Slipping..."] -> 取 "31"
-                try:
-                    p_id = principle_text.split('.')[0].strip()
-                    # 简单校验一下提取出来的是否是数字
-                    if p_id.isdigit():
-                        principle_ids.append(int(p_id))
-                    else:
-                        print(f"警告: 无法从以下文本提取有效数字编号: {principle_text}")
-                except IndexError:
-                    print(f"警告: 格式不符合预期 (找不到 '.'): {principle_text}")
+        principle_text = risk.get("safety_principle", "")
+        
+        if principle_text:
+            # 逻辑：通过 '.' 分割字符串，取第一部分，并去除首尾空格
+            # 例如 "31. Slipping..." -> 分割成 ["31", " Slipping..."] -> 取 "31"
+            try:
+                p_id = principle_text.split('.')[0].strip()
+                # 简单校验一下提取出来的是否是数字
+                if p_id.isdigit():
+                    principle_ids.append(int(p_id))
+                else:
+                    print(f"警告: 无法从以下文本提取有效数字编号: {principle_text}")
+            except IndexError:
+                print(f"警告: 格式不符合预期 (找不到 '.'): {principle_text}")
 
     # 3. 统计频次
     # 结果类似于: {'31': 1, '9': 1}
