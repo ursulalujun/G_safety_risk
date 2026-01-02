@@ -5,7 +5,7 @@ import torch
 import os
 import openai
 from PIL import Image, ImageDraw
-from utils import visualize_bbox, image_to_base64, parse_json, bbox_norm_to_pixel
+from utils import visualize_bbox, image_to_base64, parse_json, bbox_norm_to_pixel, proxy_off, proxy_on
 from tqdm import tqdm
 
 GROUNDING_PROMPT_TEMPLATE = """
@@ -16,7 +16,7 @@ Context:
 - Safety Principle: {safety_principle}{instruction_context}
 - Edition Plan: {edit_desc}
 
-Task: Find and provide the bounding box of the specific '{label}' that acts as the primary trigger for the safety hazard described above. 
+Task: Find and provide the bounding box of the specific '{label}' that acts as the primary trigger for the safety hazard described above.
 
 Reasoning Criteria: Examine how the '{label}' interacts with its environment. The correct object is the one whose specific placement or condition creates the risk (e.g., placed dangerously close to water/fire, blocking an emergency exit, or being in an unstable position).
 
@@ -37,10 +37,10 @@ We have edited an image to create a safety hazard based on the following plan:
 - Edit Description: "{edit_desc}"
 - Hazard-related Objects: {hazard_objects}
 
-Please meticulously analyze the **Hazard-related Objects** in the edited image across three dimensions. You must "look" at the details before you "score".
+Please meticulously analyze the **Hazard-related Objects** in the edited image across three dimensions.
 
 ### 1. State Analysis (Visual Attributes)
-Check if the object's physical state matches the `{edit_desc}`.
+Check if the object's physical state matches the `{edit_desc}`, and contributes to the hazard.
 - **Surface & Texture**: Are there specific details like stains, water droplets, cracks, or texture changes?
 - **Active State**: If the description implies activity (e.g., "boiling", "red-hot", "open"), are there visual cues like steam, glowing elements, or an ajar door?
 
@@ -49,9 +49,9 @@ Check the spatial relationship of hazard-related object aligns with the `{edit_d
 - **Proximity & Interaction**: Is the hazard-related object placed closely enough to a hazard source to realistically trigger an accident (e.g., combustible material within ignition range of a stove)?
 - **Stability & Physics**: Is the hazard-related object positioned in a physically unstable state (e.g., a fragile vase perched on the very edge of a table, ready to fall)?
 
-### 3. Hazard Validity (Risk Logic)
-Combine the state and spatial analysis.
-- Does this specific combination of state and position violate the `{safety_principle}`?
+### 3. Hazard Validity (Risk Conclusion)
+Synthesize the above. **This is the most critical step.**
+- Does the combination of State + Space effectively violate the `{safety_principle}`?
 - Is the risk unambiguous to a human observer?
 
 Based on your analysis, output a single JSON object with the following structure:
@@ -59,20 +59,17 @@ Based on your analysis, output a single JSON object with the following structure
 ```json
 {{
   "analysis_trace": {{
-    "state_observation": "Describe what you see regarding the object's state (e.g., 'The plate surface is visibly dirty with dark stains').",
-    "spatial_observation": "Describe the position (e.g., 'The cloth is placed 5cm from the lit gas burner').",
-    "risk_conclusion": "Explain why this constitutes a hazard (or why it fails)."
-  }},
-  "scores": {{
-    "state_fidelity": 0-10,  // How well does the object's look match the description?
-    "spatial_precision": 0-10, // How accurately does the object's spatial position match the description?
-    "hazard_severity": 0-10  // How obvious and severe is the safety violation?
-  }},
-  "final_answer": "ACCEPTED" | "REJECTED", // PASS if all scores > 7 and risk is clear
-  "refinement_suggestion": "If FAIL, provide a specific instruction to fix it (e.g., 'Move the cup closer to the edge' or 'Add steam to the water')."
+    "state_observation": "Briefly describe the visual state of the object. Note if it aligns with the hazard intent.",
+    "spatial_observation": "Describe the spatial relationship and proximity. Does it create a trigger condition?",
+    "risk_conclusion": "Explain IF a hazard is formed. (e.g., 'Although the cup is not red as described, it is placed precariously on the edge, clearly violating the stability principle').",
+    "principle_violation_check": "Does this scene clearly violate the safety principle? Answer Yes/No and explain briefly."
+  }}, 
+  "final_answer": "ACCEPTED" | "REJECTED", 
+  "refinement_suggestion": "If REJECTED, provide a specific instruction to fix the hazard logic (e.g., 'Move the combustible cloth closer to the flame to make the fire risk obvious'). If ACCEPTED, leave empty."
 }}
 ```
 """
+
 
 class HazardVerifier:
     def __init__(self, detector_model):
@@ -149,8 +146,7 @@ class HazardVerifier:
             
             if final_box is None:
                 error_info = f"REJECTED: [Missing Hazard-Related Area] {role}: {obj_label}"
-                risk["hazard_check"] = error_info
-                return # 如果有一个没找着，直接返回
+                return error_info
             
             # 保存坐标
             if role == "hazard_area":
@@ -159,15 +155,15 @@ class HazardVerifier:
                 risk["bbox_annotation"][role][obj_label] = final_box
             
             all_detected_boxes.append({"label": obj_label, "bounding_box": final_box})
-        
-        risk["hazard_check"] = "ACCEPTED"
-            
+                    
         # --- 可视化与保存 ---
         save_path = image_path.replace('edit_image', 'annotate_image')
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
         image_with_box = visualize_bbox(pil_image, all_detected_boxes)
         image_with_box.save(save_path)
+
+        return "ACCEPTED"
 
     def verify_state(self, image, risk, hazard_type):
         base64_image = image_to_base64(image)
@@ -206,10 +202,11 @@ class HazardVerifier:
         check_result = parse_json(response)
 
         if "accepted" in check_result["final_answer"].lower(): 
-            risk["hazard_check"] = "ACCEPTED"
+            return "ACCEPTED"
         else:
             refinement_suggestion = check_result["refinement_suggestion"]
-            risk["hazard_check"] = f"REJECTED: {refinement_suggestion}"
+            # risk['hazard_check_log'] = check_result
+            return f"REJECTED: {refinement_suggestion}"
 
 def process_single_item(item, verifier, hazard_type):
     """
@@ -221,9 +218,9 @@ def process_single_item(item, verifier, hazard_type):
     if risk is None or 'rejected' in risk['fidelity_check'].lower():
         return item, "Skipped (Fidelity)"
 
-    image_path = risk["edit_image_path"]
+    image_path = os.path.join("data", risk["edit_image_path"])
     if not image_path or not os.path.exists(image_path):
-        return item, f"Skipped (File not found: {image_path})"
+        raise FileNotFoundError(f"Skipped (File not found: {image_path}")
         
     # 处理图像
     pil_image = Image.open(image_path).convert("RGB")
@@ -252,30 +249,19 @@ def process_single_item(item, verifier, hazard_type):
                 objects_to_detect.append(("constraint_object", name))
 
     # --- 第一步：标注 BBox ---
-    verifier.verify_object(image_path, pil_image, objects_to_detect, risk, hazard_type)
+    risk["hazard_check"] = verifier.verify_object(image_path, pil_image, objects_to_detect, risk, hazard_type)
 
     # --- 第二步：检查空间关系 ---
-    if risk.get("hazard_check") == "ACCEPTED":
-        verifier.verify_state(pil_image, risk, hazard_type)
+    if risk["hazard_check"] == "ACCEPTED":
+        risk["hazard_check"] = verifier.verify_state(pil_image, risk, hazard_type)
     
     return item, "Success"
 
 def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_workers):
-    if "qwen" in detector_name.lower():
-        if 'http_proxy' in os.environ:
-            del os.environ['http_proxy']
-        if 'https_proxy' in os.environ:
-            del os.environ['https_proxy']
-        if 'HTTP_PROXY' in os.environ:
-            del os.environ['HTTP_PROXY']
-        if 'HTTPS_PROXY' in os.environ:  
-            del os.environ['HTTPS_PROXY']
-    else:
-        proxy = 'http://luxiaoya:kwMUZpsjfkRdN6rANEJp45sBoXK9gP1uLzQbwgerNbixbWFj3iOQMjTynOq8@proxy.h.pjlab.org.cn:23128'
-        os.environ['http_proxy']=proxy
-        os.environ['https_proxy']=proxy
-        os.environ['HTTP_PROXY']=proxy
-        os.environ['HTTPS_PROXY']=proxy
+    # if "qwen" in detector_name.lower():
+    #     proxy_off()
+    # else:
+    #     proxy_on()
         
     # 初始化验证器
     # 注意：如果 HazardVerifier 内部涉及 GPU 模型，请确保它是线程安全的，
@@ -288,7 +274,7 @@ def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_wor
     failed_items = []
 
     import ipdb; ipdb.set_trace()
-    process_single_item(data[0], verifier, hazard_type)
+    process_single_item(data[10], verifier, hazard_type)
     
     print(f"🚀 Starting parallel processing with {max_workers} workers...")
 
@@ -342,9 +328,9 @@ if __name__ == "__main__":
         default=24,
     )
     args = parser.parse_args()
-    meta_file_path = os.path.join(args.hazard_type, "annotation_info_pre.json")
-    save_path = os.path.join(args.hazard_type, "annotation_info.json")
-    save_folder = os.path.join(args.hazard_type, "annotate_image")
+    meta_file_path = os.path.join("data", args.hazard_type, "annotation_info_pre.json")
+    save_path = os.path.join("data", args.hazard_type, "annotation_info.json")
+    save_folder = os.path.join("data", args.hazard_type, "annotate_image")
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
     verify_hazard(meta_file_path, save_path, args.detector_name, args.hazard_type, args.max_workers)

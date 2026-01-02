@@ -15,6 +15,22 @@ from io import BytesIO
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
+def proxy_off():
+    if 'http_proxy' in os.environ:
+        del os.environ['http_proxy']
+    if 'https_proxy' in os.environ:
+        del os.environ['https_proxy']
+    if 'HTTP_PROXY' in os.environ:
+        del os.environ['HTTP_PROXY']
+    if 'HTTPS_PROXY' in os.environ:  
+        del os.environ['HTTPS_PROXY']
+
+def proxy_on():
+    os.environ['http_proxy']=os.environ['PROXY_URL']
+    os.environ['https_proxy']=os.environ['PROXY_URL']
+    os.environ['HTTP_PROXY']=os.environ['PROXY_URL']
+    os.environ['HTTPS_PROXY']=os.environ['PROXY_URL']
+    
 def parse_json(response):
     response = response.replace("\n", "")
     

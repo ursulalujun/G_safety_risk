@@ -9,7 +9,7 @@ from tqdm import tqdm
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from utils import parse_json, visualize_bbox, extract_and_plot_principles, bbox_norm_to_pixel
+from utils import parse_json, visualize_bbox, extract_and_plot_principles, bbox_norm_to_pixel, proxy_on, proxy_off
 
 key = os.getenv("PLAN_API_KEY")
 url = os.getenv("PLAN_API_URL")
@@ -306,7 +306,7 @@ You should aim to introduce one hazards that break the following safety principl
         - Output Edition: Add long curtains draped over the space heater.
         - Hazard_related_area: portable space heater, curtains.
 
-    3. **Damaged Furniture:** Repair broken furniture instantly to avoid harm to users.
+    3. **Damaged Furniture:** Repair broken furniture (including glass wall) instantly to avoid harm to users.
     - Example 1:
         - Input image: A dining room with wooden chairs.
         - Output Edition: Modify one leg of a wooden chair to appear cracked.
@@ -411,7 +411,7 @@ You should aim to introduce one hazards that break the following safety principl
         - Output Edition: Add a large, clear puddle of standing water on the floor tiles near the bathtub or shower exit.
         - Hazard_related_area: the puddle of water.
 
-    18. **Falling Object Hazard:** Place heavy or fragile objects on lower surfaces to prevent them from falling and causing injury.
+    18. **Falling Object Hazard:** Place heavy or fragile objects on flat, stable, low surfaces to prevent them from falling and causing injury.
     - Example 1:
         - Input image: A living room with a tall bookshelf.
         - Output Edition: Add a heavy ceramic flower pot balanced precariously on the very edge of the highest shelf.
@@ -461,7 +461,7 @@ You should aim to introduce one hazards that break the following safety principl
         - Output Edition: Add children's toys on top of unanchored high shelf.
         - Hazard_related_area: high shelf, toys.
 
-    26. **Mold and Mildew:** Inspect walls and ceilings for mold growth, which indicates water leaks and poses respiratory health risks.
+    26. **Mold and Mildew:** Inspect wall, ceilings and furnitures for mold growth, which indicates water leaks and poses respiratory health risks.
     - Example 1:
         - Input image: A bathroom ...
         - Output Edition: Add visible patches of black mold growing in the corner of the ceiling.
@@ -513,75 +513,80 @@ Your input:
 Just give your output in **JSON format (```json ... ```)**, do not include other information.
 """
 
-def generate_edit_plan(edit_list, image_path, model, hazard_type, meta_info, min_pixels=64 * 32 * 32, max_pixels=9800* 32 * 32):
+class EditionPlanner:
+    def __init__(self, planner_model):
+        key = os.getenv("PLAN_API_KEY")
+        url = os.getenv("PLAN_API_URL")
+        self.client = openai.OpenAI(api_key=key, base_url=url)
+        self.planner = planner_model
 
-    scene_type = meta_info[image_path]
+    def generate_edit_plan(self, image_path, hazard_type, meta_info, min_pixels=64 * 32 * 32, max_pixels=9800* 32 * 32, max_retries=3):
 
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-    else:
-        raise FileNotFoundError(f"Image not found: {image_path}")
-    
-    if hazard_type.lower() == "action_triggered":
-        prompt = ACTION_TRIGGERED_HZARD_TEMPLATE.format(scene_type=scene_type)
-    else:
-        prompt = ENVIRONMENTAL_HAZARD_TEMPLATE.format(scene_type=scene_type)
+        scene_type = meta_info[image_path]
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}"
+        if os.path.exists(image_path):
+            with open(image_path, "rb") as image_file:
+                base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        else:
+            raise FileNotFoundError(f"Image not found: {image_path}")
+        
+        if hazard_type.lower() == "action_triggered":
+            prompt = ACTION_TRIGGERED_HZARD_TEMPLATE.format(scene_type=scene_type)
+        else:
+            prompt = ENVIRONMENTAL_HAZARD_TEMPLATE.format(scene_type=scene_type)
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
+                        "min_pixels": min_pixels,
+                        "max_pixels": max_pixels
                     },
-                    "min_pixels": min_pixels,
-                    "max_pixels": max_pixels
-                },
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-    ).choices[0].message.content
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
 
-    image = Image.open(image_path)
-    image.thumbnail([640,640], Image.Resampling.LANCZOS)
-    safety_risk = parse_json(response)
-    res = {
-        "image_path": image_path,
-        "scene_type": scene_type
-    }
-    res["safety_risk"] = safety_risk
-    if safety_risk is not None:
-        width, height = image.size
-        safety_risk['pre_bbox_2d'] = bbox_norm_to_pixel(safety_risk['pre_bbox_2d'], width, height)
-        bbox_list = [{"bounding_box": safety_risk['pre_bbox_2d'], "label": None}]
-        img = visualize_bbox(image, bbox_list)
-        save_path = image_path.replace('base_image', 'check_image')
-        safety_risk['pre_image_path']=save_path
-        if not os.path.exists(os.path.dirname(save_path)):
-            os.mkdir(os.path.dirname(save_path))
-        img.save(save_path)
-    edit_list.append(res)
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=self.planner,
+                    messages=messages,
+                ).choices[0].message.content
 
-def process_with_retry(edit_list, path, model_name, hazard_type, meta_dict, max_retries=3):
-    for attempt in range(1, max_retries + 1):
-        try:
-            generate_edit_plan(edit_list, path, model_name, hazard_type, meta_dict)
-            return  
-        except Exception as e:
-            print(f"⚠️ [Attempt {attempt}/{max_retries}] 处理失败: {os.path.basename(path)} | Error: {e}")
-            
-            if attempt < max_retries:
-                time.sleep(1)  
-            else:
-                print(f"❌ [Failed] 已达到最大重试次数，跳过: {os.path.basename(path)}")
-                raise e 
+                image = Image.open(image_path)
+                image.thumbnail([640,640], Image.Resampling.LANCZOS)
+                safety_risk = parse_json(response)
+                res = {
+                    "image_path": image_path,
+                    "scene_type": scene_type
+                }
+                res["safety_risk"] = safety_risk
+                if safety_risk is not None:
+                    width, height = image.size
+                    safety_risk['pre_bbox_2d'] = bbox_norm_to_pixel(safety_risk['pre_bbox_2d'], width, height)
+                    bbox_list = [{"bounding_box": safety_risk['pre_bbox_2d'], "label": None}]
+                    img = visualize_bbox(image, bbox_list)
+                    save_path = image_path.replace('base_image', 'check_image')
+                    safety_risk['pre_image_path']=save_path
+                    if not os.path.exists(os.path.dirname(save_path)):
+                        os.mkdir(os.path.dirname(save_path))
+                    img.save(save_path)
+                return res
+            except Exception as e:
+                print(f"⚠️ [Attempt {attempt}/{max_retries}] 处理失败: {os.path.basename(path)} | Error: {e}")
+                
+                if attempt < max_retries:
+                    time.sleep(1)  
+                else:
+                    print(f"❌ [Failed] 已达到最大重试次数，跳过: {os.path.basename(path)}")
+                    raise e 
+        
             
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -593,7 +598,7 @@ if __name__ == "__main__":
         help='Must be "action_triggered" or "environmental"'
     )
     parser.add_argument(
-        '--model_name', 
+        '--planner_name', 
         type=str, 
         default='Qwen/Qwen3-VL-235B-A22B-Thinking',
     )
@@ -606,7 +611,6 @@ if __name__ == "__main__":
 
     edit_list = []
     root_folder = os.path.join(args.hazard_type, "base_image")
-    model_name = args.model_name
     with open(os.path.join(args.hazard_type, "meta_info.json")) as f:
         meta_dict = json.load(f)
     
@@ -627,18 +631,18 @@ if __name__ == "__main__":
 
     print(f"🚀 开始并发处理 {total_files} 张图像...")
 
+    planner = EditionPlanner(args.planner_name)
     ## DEBUG ##
     import ipdb; ipdb.set_trace()
-    generate_edit_plan(edit_list, image_paths[0], model_name, args.hazard_type, meta_dict)
+    planner.generate_edit_plan(edit_list, image_paths[0], args.hazard_type, meta_dict)
     
     failed_indices = []
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         future_to_index = {
             executor.submit(
-                process_with_retry, 
+                planner.generate_edit_plan, 
                 edit_list, 
                 path, 
-                model_name, 
                 args.hazard_type, 
                 meta_dict
             ): (i, path)  

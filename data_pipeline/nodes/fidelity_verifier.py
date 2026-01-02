@@ -5,6 +5,7 @@ import base64
 from tqdm import tqdm
 from openai import OpenAI  # Recommended SDK for calling Qwen-VL APIs
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from utils import proxy_off
 
 class FidelityVerifier:
     def __init__(self):
@@ -46,7 +47,7 @@ class FidelityVerifier:
                     "2. Distortion: Is the image or its geometry distorted, deformed, or melted?\n"
                     "3. Unrealistic Scale: Are relative sizes of objects illogical (e.g., a giant cat)?\n"
                     "4. Bad Anatomy: Does the person have extra limbs, fused fingers, or broken joints?\n\n"
-                    "Output Format: For each issue found, provide: [Error Message] - [Reasoning (Error Categoty)]. "
+                    "Output Format: For each issue found, provide: [Error Message] - [Suggestion (Point error categoty and give refinement suggestion)]. "
                     "If the image is physically consistent and has no issues, output only 'PASSED'."
                 )
             },
@@ -87,16 +88,9 @@ class FidelityVerifier:
         vqa_result = self.check_physics_vqa(image_path)
         
         if not vqa_result["passed"]:
-            return {
-                "status": "REJECTED",
-                "stage": "Qwen_VL_Filter",
-                "detail": vqa_result["reason"]
-            }
+            return f"REJECTED: {vqa_result["reason"]}"
 
-        return {
-            "status": "ACCEPTED",
-            "detail": "The image is of good quality and follows physical logic"
-        }
+        return "ACCEPTED"
 
 def process_single_item(validator, item):
     """
@@ -124,14 +118,7 @@ def verify_fidelity(meta_file_path, save_path, hazard_type, max_workers):
     """
     Load JSON data, process images through the verifier, and save results.
     """
-    if 'http_proxy' in os.environ:
-        del os.environ['http_proxy']
-    if 'https_proxy' in os.environ:
-        del os.environ['https_proxy']
-    if 'HTTP_PROXY' in os.environ:
-        del os.environ['HTTP_PROXY']
-    if 'HTTPS_PROXY' in os.environ:  
-        del os.environ['HTTPS_PROXY']
+    proxy_off()
     validator = FidelityVerifier()
     
     with open(meta_file_path, 'r', encoding='utf-8') as f:
