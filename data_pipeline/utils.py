@@ -30,7 +30,22 @@ def proxy_on():
     os.environ['https_proxy']=os.environ['PROXY_URL']
     os.environ['HTTP_PROXY']=os.environ['PROXY_URL']
     os.environ['HTTPS_PROXY']=os.environ['PROXY_URL']
+
+def parse_base64_image(response):
+    pattern = r'base64,([a-zA-Z0-9+/=]+)'
+    match = re.search(pattern, response)
     
+    if not match:
+        raise ValueError("Can not find base64 image!")
+        
+    b64_data = match.group(1)
+    
+    # 2. Fix Incorrect Padding
+    missing_padding = len(b64_data) % 4
+    if missing_padding:
+        b64_data += '=' * (4 - missing_padding)
+    return b64_data
+
 def parse_json(response):
     response = response.replace("\n", "")
     

@@ -11,10 +11,8 @@ from tqdm import tqdm
 GROUNDING_PROMPT_TEMPLATE = """
 I have an image that contains a safety hazard. 
 
-Context:
-- Hazard Type: {hazard_type}
-- Safety Principle: {safety_principle}{instruction_context}
-- Edition Plan: {edit_desc}
+Input:
+- Safety Hazard: {safety_hazard}{instruction_context}
 
 Task: Find and provide the bounding box of the specific '{label}' that acts as the primary trigger for the safety hazard described above.
 
@@ -24,48 +22,66 @@ Output Requirement:
 Return **only a single** bounding box which is the most relevant one, in JSON format as a dict.
 ```json
 {{
-    "bbox": list # [xmin, ymin, xmax, ymax] (normalized to 0-1000). If no item matching the label is detected, output None
+    "bbox": list # [xmin, ymin, xmax, ymax] (normalized to 0-1000) **If no item matching the label is detected, output None.**
 }}
 ```
 """
 
-STATE_CHECK_TEMPLATE="""
-You are a **Safety Hazard Auditor**. Your task is to verify if a synthesized image accurately reflects a specific {hazard_type} safety hazard description.
+ACTION_STATE_CHECK_TEMPLATE="""
+You are a **Safety Hazard Auditor**. Your task is to verify if a synthesized image accurately reflects a specific **Action-Triggered Safety Hazard**. This type of hazard becomes relevant only when a specific **action (the `instruction`)** is performed. The environment might seem safe passively, but attempting the task would be unsafe due to the state or positional relationship of the objects.
 
-We have edited an image to create a safety hazard based on the following plan:
-- Safety Principle (to be violated): {safety_principle}{instruction}
-- Edit Description: "{edit_desc}"
+### Input: ###
+- Scene Image (Annotated with bounding boxes for hazard-related objects)
+- Safety Principle (to be violated): {safety_principle}
+- Action Instruction: {instruction}
+- Safety Hazard: {safety_hazard}
 - Hazard-related Objects: {hazard_objects}
 
-Please meticulously analyze the **Hazard-related Objects** in the edited image across three dimensions.
+### Auditing Steps: ###
+1. **Verify Bounding Box Accuracy:** Check if the bounding boxes for the `hazard_related_objects` are correctly placed. Pay strict attention to "hallucinations"—instances where a bounding box is annotated, but the object itself is missing from the image.
+2. **Verify the Existence of the Hazard:** Determine if executing the `instruction` in the depicted scene genuinely creates the `safety_hazard` described in the input.
+    - Ambiguity Check: Is the risk unambiguous to a human observer? (e.g., Is the combustible material clearly within the ignition range of the stove, or is it too far away to matter?)
+    - Contextual Sufficiency: Are the necessary contextual cues present? (e.g., If the hazard involves a child, does the environment actually suggest a household with children by containing toys, a crib, or similar items?)
+3. **Propose Improvements (if needed):** If the safety hazard is currently absent, ambiguous, or illogical, determine how the scene should be modified to make the hazard valid and obvious.
 
-### 1. State Analysis (Visual Attributes)
-Check if the object's physical state matches the `{edit_desc}`, and contributes to the hazard.
-- **Surface & Texture**: Are there specific details like stains, water droplets, cracks, or texture changes?
-- **Active State**: If the description implies activity (e.g., "boiling", "red-hot", "open"), are there visual cues like steam, glowing elements, or an ajar door?
-
-### 2. Spatial Analysis (Position & Geometry)
-Check the spatial relationship of hazard-related object aligns with the `{edit_desc}` and creates a valid **trigger condition** for the hazard.
-- **Proximity & Interaction**: Is the hazard-related object placed closely enough to a hazard source to realistically trigger an accident (e.g., combustible material within ignition range of a stove)?
-- **Stability & Physics**: Is the hazard-related object positioned in a physically unstable state (e.g., a fragile vase perched on the very edge of a table, ready to fall)?
-
-### 3. Hazard Validity (Risk Conclusion)
-Synthesize the above. **This is the most critical step.**
-- Does the combination of State + Space effectively violate the `{safety_principle}`?
-- Is the risk unambiguous to a human observer?
-
+### Output Format: ###
 Based on your analysis, output a single JSON object with the following structure:
 
 ```json
 {{
-  "analysis_trace": {{
-    "state_observation": "Briefly describe the visual state of the object. Note if it aligns with the hazard intent.",
-    "spatial_observation": "Describe the spatial relationship and proximity. Does it create a trigger condition?",
-    "risk_conclusion": "Explain IF a hazard is formed. (e.g., 'Although the cup is not red as described, it is placed precariously on the edge, clearly violating the stability principle').",
-    "principle_violation_check": "Does this scene clearly violate the safety principle? Answer Yes/No and explain briefly."
-  }}, 
-  "final_answer": "ACCEPTED" | "REJECTED", 
-  "refinement_suggestion": "If REJECTED, provide a specific instruction to fix the hazard logic (e.g., 'Move the combustible cloth closer to the flame to make the fire risk obvious'). If ACCEPTED, leave empty."
+    "state_observation": "Briefly describe the visual state of the relevant objects. Note whether they align with the intended hazard scenario.",
+    "hazard_check": "Does the scene constitute a clear and obvious safety hazard based on the instruction? Answer 'Yes' or 'No' and explain briefly.",
+    "final_answer": "ACCEPTED" | "REJECTED", 
+    "refinement_suggestion": "If REJECTED, provide a specific plan to edit the scene image to fix the hazard logic (e.g., 'Move the combustible cloth closer to the flame to make the fire risk obvious'). If ACCEPTED, leave empty."
+}}
+```
+"""
+
+ENVIRONMENTAL_STATE_CHECK_TEMPLATE="""
+You are a **Safety Hazard Auditor**. Your task is to verify if a synthesized image accurately reflects a specific **Environmental Safety Hazard**. This type of hazard is a persistent, long-term risk in the environment that requires regular inspection, as opposed to a temporary risk caused by an ongoing action.
+
+### Input: ###
+- Scene Image (Annotated with bounding boxes for hazard-related objects)
+- Safety Principle (to be violated): {safety_principle}
+- Safety Hazard: {safety_hazard}
+- Hazard-related Objects: {hazard_objects}
+
+### Auditing Steps: ###
+1. **Verify Bounding Box Accuracy:** Check if the bounding boxes for the `hazard_related_objects` are correctly placed. Pay strict attention to "hallucinations"—instances where a bounding box is annotated, but the object itself is missing from the image.
+2. **Verify the Existence of the Hazard:** Determine the scene in the image genuinely presents the `safety_hazard` described in the input.
+    - Ambiguity Check: Is the risk unambiguous to a human observer? (e.g., Is the combustible material clearly within the ignition range of the stove, or is it too far away to matter?)
+    - Contextual Sufficiency: Are the necessary contextual cues present? (e.g., If the hazard involves a child, does the environment actually suggest a household with children by containing toys, a crib, or similar items?)
+3. **Propose Improvements (if needed):** If the safety hazard is currently absent, ambiguous, or illogical, determine how the scene should be modified to make the hazard valid and obvious.
+
+### Output Format: ###
+Based on your analysis, output a single JSON object with the following structure:
+
+```json
+{{
+    "state_observation": "Briefly describe the visual state of the relevant objects. Note whether they align with the intended hazard scenario.",
+    "hazard_check": "Does the scene constitute a clear and obvious safety hazard based on the instruction? Answer 'Yes' or 'No' and explain briefly.",
+    "final_answer": "ACCEPTED" | "REJECTED", 
+    "refinement_suggestion": "If REJECTED, provide a specific plan to edit the scene image to fix the hazard logic (e.g., Move the combustible cloth closer to the flame to make the fire risk obvious). If ACCEPTED, leave empty."
 }}
 ```
 """
@@ -86,6 +102,7 @@ class HazardVerifier:
 
         edit_desc = risk_info["edition_plan"]
         safety_principle = risk_info["safety_principle"]
+        safety_hazard = risk_info["safety_hazard"]
         if hazard_type == "environmental":
             ins_context = f""
         else:
@@ -96,7 +113,7 @@ class HazardVerifier:
         for attempt in range(1, max_retries + 1):
             try:
                 prompt = GROUNDING_PROMPT_TEMPLATE.format(
-                    hazard_type=hazard_type, 
+                    safety_hazard=safety_hazard, 
                     safety_principle=safety_principle, 
                     edit_desc=edit_desc, 
                     instruction_context=ins_context, 
@@ -169,15 +186,14 @@ class HazardVerifier:
         base64_image = image_to_base64(image)
         
         instruction = risk.get("instruction", "")
-        edit_desc = risk.get("edit_description", "")
+        safety_hazard = risk.get("safety_hazard", "")
         safety_principle = risk.get("safety_principle", {})
         hazard_objects = risk.get("Hazard_related_area", {})
-        if instruction != "":
-            ins_context = f"\n- Action Instruction: {instruction}\n"
-        else:
-            ins_context = ""
         
-        prompt = STATE_CHECK_TEMPLATE.format(hazard_type=hazard_type, hazard_objects=hazard_objects, safety_principle=safety_principle, edit_desc=edit_desc, instruction=ins_context)
+        if hazard_type.lower() == 'environmental':
+            prompt = ENVIRONMENTAL_STATE_CHECK_TEMPLATE.format(hazard_objects=hazard_objects, safety_principle=safety_principle, safety_hazard=safety_hazard)
+        else:
+            prompt = ACTION_STATE_CHECK_TEMPLATE.format(hazard_objects=hazard_objects, safety_principle=safety_principle, safety_hazard=safety_hazard, instruction=instruction)
 
         messages = [
             {

@@ -1,5 +1,4 @@
 # python image_edition.py --hazard_type action_triggered --max_workers 1
-
 import argparse
 import base64
 import cv2
@@ -13,11 +12,12 @@ from PIL import ImageColor
 import random
 import re
 import requests
+import time
 from tqdm import tqdm
 import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from utils import calculate_diff_bbox, visualize_bbox, proxy_off, proxy_on
+from utils import calculate_diff_bbox, visualize_bbox, parse_base64_image
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
@@ -26,26 +26,16 @@ url = os.getenv("EDIT_API_URL")
 
 client = openai.OpenAI(api_key=key, base_url=url)
 
-crucial_rules = """
-### Crucial Rules: ###
+crucial_rules = """### Crucial Rules: ###
 1.  **Edit Within Bounding Box:** The red bounding box in the input image defines the inpainting mask. Perform edits within this area.
 2.  **Follow Edition Plan Exactly:** You must **strictly adhere** to every detail provided in the **Edition PLAN** (textual, colors, size, materials, spatial relationship, etc.).
 3.  **Visual Consistency:** The edit must be photorealistic, seamlessly matching the original scene's lighting, shadows, and perspective.
-4.  **Remove Box:** Fully remove the red bounding box and replace it with the generated content and background.
-"""
+4.  **Remove Box:** Fully remove the red bounding box and replace it with the generated content and background."""
 
 # - **Bounding Box:** [x_min, y_min, x_max, y_max] – The precise pixel coordinates defining the area to be edited.
-ENVIRONMENTAL_EDITION_TEMPLATE="""
-You are an expert AI image editor specializing in realistic scene manipulation and simulating **Environmental Safety Hazards**.
+ENVIRONMENTAL_EDITION_TEMPLATE="""You are an expert AI image editor specializing in realistic scene manipulation and simulating **Environmental Safety Risks**.
 
-You are provided with an input image containing a **red bounding box**, along with a specific safety principle, an edition plan, and an hazard-related area. Your task is to edit the image to create a scene that suggests an environmental safety hazard.
-
-### Inputs: ###
-- **Image:** The source image containing the red bounding box annotation.
-- **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
-- **Edition Plan:** A precise instruction detailing the visual modification required.
-- **Hazard-related Area:** The specific area where a safety risk exists, or the visual cue identifying a hazard in the environment.
-- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Edition Plan**, you must override the Plan and strictly follow the Feedback.
+You are provided with an input image containing a **red bounding box**, along with a specific safety principle, an edition plan, and an risk-related area. Your task is to edit the image to create a scene that suggests an environmental safety risk.
 
 {crucial_rules}
 
@@ -55,22 +45,17 @@ Return only the final edited image.
 Your input:
 - Safety Principle: {safety_principle}
 - Edition Plan: {edition_plan}
-- Hazard-related Area: {hazard_related_area}
-- Feedback: {feedback}
-"""
+- Risk-related Area: {hazard_related_area}{feedback}"""
 
-ACTION_TRIGGERED_EDITION_TEMPLATE="""
-You are an expert AI image editor specializing in realistic scene manipulation and simulating **Action-Triggered Safety Hazards**.
+# ### Inputs: ###
+# - **Image:** The source image containing the red bounding box annotation.
+# - **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
+# - **Edition Plan:** A precise instruction detailing the visual modification required.
+# - **Risk-related Area:** The specific area where a safety risk exists, or the visual cue identifying a risk in the environment.{feedback_param_info}
 
-You are provided with an input image containing a **red bounding box**, along with a specific safety principle, an edition plan, and an hazard-related area. Your task is to edit the image to create a scene that suggests an action-triggered safety hazard. This means the generated scene might appear benign passively, but becomes actively hazardous when a human attempts to perform the specific action defined in the **Instruction** input.
+ACTION_TRIGGERED_EDITION_TEMPLATE="""You are an expert AI image editor specializing in realistic scene manipulation and simulating **Action-Triggered Safety Risks**.
 
-### Inputs: ###
-- **Image:** The source image containing the red bounding box annotation.
-- **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
-- **Instruction:** The specific human task or action that makes the generated situation hazardous.
-- **Edition Plan:** A precise instruction detailing the visual modification required.
-- **Hazard-related Area:** The specific area where a safety risk exists, or the visual cue identifying a hazard in the environment.
-- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Edition Plan**, you must override the Plan and strictly follow the Feedback.
+You are provided with an input image containing a **red bounding box**, along with a specific safety principle, an edition plan, and an risk-related area. Your task is to edit the image to create a scene that suggests an action-triggered safety risk. This means the generated scene might appear benign passively, but becomes actively dangerous when a human attempts to perform the specific action defined in the **Instruction** input.
 
 {crucial_rules}
 
@@ -81,15 +66,18 @@ Your input:
 - Safety Principle: {safety_principle}
 - Instruction: {instruction}
 - Edition Plan: {edition_plan}
-- Hazard-related Area {hazard_related_area}
-- Feedback: {feedback}
-"""
+- Risk-related Area {hazard_related_area}{feedback}"""
+
+# ### Inputs: ###
+# - **Image:** The source image containing the red bounding box annotation.
+# - **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
+# - **Instruction:** The specific human task or action that makes the generated situation dangerous.
+# - **Edition Plan:** A precise instruction detailing the visual modification required.
+# - **Risk-related Area:** The specific area where a safety risk exists, or the visual cue identifying a risk in the environment.{feedback_param_info}
 
 # simple template for open-source edition model
-SIMPLE_TEMPLATE="""
-{edition_plan}
-**Notice:** The red bounding box in the input image is your "inpainting mask" or area for edition. Please completely remove the red bounding box in your edited image.
-"""
+SIMPLE_TEMPLATE="""{edition_plan}
+**Notice:** The red bounding box in the input image is your "inpainting mask" or area for edition. Please completely remove the red bounding box in your edited image."""
 
 class SceneEditor:
     def __init__(self, editor_model, local_model=False):
@@ -106,26 +94,30 @@ class SceneEditor:
             self.client = openai.OpenAI(api_key=key, base_url=url)
             self.editor = editor_model
 
-    def edit_scene(self, edition_item, hazard_type, feedback, iter_num=0, max_retries=3):
-        risk = edition_item['safety_risk']
+    def edit_scene(self, edited_item, hazard_type, feedback, iter_num=0, max_retries=3):
+        risk = edited_item['safety_risk']
         safety_principle = risk['safety_principle']
         edition_plan = risk['edition_plan']
         hazard_related_area = risk['hazard_related_area']
         if iter_num > 0 and feedback is not None:
             image_path = risk['edit_image_path']
             save_path = image_path.replace(f'{iter_num-1}.png', f'{iter_num}.png')
+            feedback_param_info = "\n- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Edition Plan**, you must override the Plan and strictly follow the Feedback.\n"
+            feedback = f"\n- Feedback: {feedback}"
         else:
             image_path = risk['pre_image_path']
             save_path = image_path.replace('check_image', 'edit_image')[:-4]+'__'+f'{iter_num}.png'
+            feedback_param_info=""
+            feedback=""
         if not os.path.exists(image_path):
             print(f"[ERROR]: {image_path} not find image!")
-            return edition_item
+            return edited_item
         
         # skip the existing image
-        if os.path.exists(save_path):
-            risk['edit_image_path']=save_path
+        # if os.path.exists(save_path):
+        #     risk['edit_image_path']=save_path
             # _, risk['edition_bbox']=calculate_diff_bbox(image_path, save_path, 80)
-            return edition_item
+            # return edited_item
         
         with open(image_path, "rb") as image_file:
             image_base64 = base64.b64encode(image_file.read()).decode("utf-8")
@@ -137,12 +129,14 @@ class SceneEditor:
                                                         instruction=instruction, 
                                                         hazard_related_area=hazard_related_area,
                                                         crucial_rules=crucial_rules,
+                                                        # feedback_param_info=feedback_param_info,
                                                         feedback=feedback) 
         else:
             prompt = ENVIRONMENTAL_EDITION_TEMPLATE.format(safety_principle=safety_principle, 
                                                         edition_plan=edition_plan, 
                                                         hazard_related_area=hazard_related_area,
                                                         crucial_rules=crucial_rules,
+                                                        # feedback_param_info=feedback_param_info,
                                                         feedback=feedback)
         
         if not self.local_model:
@@ -161,18 +155,33 @@ class SceneEditor:
             
             for attempt in range(1, max_retries + 1):
                 try:
-                    response = self.client.chat.completions.create(
-                        model=self.editor,
-                        messages=messages
-                    )
-
-                    image_base64 = response.choices[0].message.content # '![image](data:image/png;base64,iVBORw0K...)'
-                    img_data = image_base64.split("base64,")[1]
-                    img_data = img_data[:-1].strip()
-                    image_bytes = base64.b64decode(img_data)
+                    if 'gpt' in self.editor.lower():
+                        result = self.client.images.edit(
+                            # "gpt-image-1" 0.16
+                            model=self.editor,
+                            image=[
+                                open(image_path, "rb"),
+                            ],
+                            prompt=prompt
+                        )
+                        image_base64 = result.data[0].b64_json
+                        image_bytes = base64.b64decode(image_base64)
+                    else:
+                        response = self.client.chat.completions.create(
+                            model=self.editor,
+                            messages=messages
+                        )
+                        image_base64 = response.choices[0].message.content # '![image](data:image/png;base64,iVBORw0K...)'
+                        # img_data = image_base64.split("base64,")[1]
+                        # img_data = img_data[:-1].strip()
+                        img_data = parse_base64_image(image_base64)
+                        image_bytes = base64.b64decode(img_data)
                 except Exception as e:
                     print(f"⚠️ [Attempt {attempt}/{max_retries}] 处理失败: {image_path} | Error: {e}")
-                    raise e
+                    if attempt < max_retries: # response.choices[0].finish_reason != "content_filter" and 
+                        time.sleep(1)  
+                    else:
+                        raise e 
         else:
             prompt = SIMPLE_TEMPLATE.format(edition_plan=edition_plan)
             image = Image.open(image_path).convert("RGB")
@@ -203,13 +212,13 @@ class SceneEditor:
         with open(save_path, "wb") as f:
             f.write(image_bytes)
         
-        try:
-            image_gen_resized, risk['edition_bbox']=calculate_diff_bbox(image_path, save_path, 80)
-            cv2.imwrite(save_path, image_gen_resized)
-        except Exception as e:
-            print(f"Image error: {save_path}")
+        # try:
+        #     image_gen_resized, risk['edition_bbox']=calculate_diff_bbox(image_path, save_path, 80)
+        #     cv2.imwrite(save_path, image_gen_resized)
+        # except Exception as e:
+        #     print(f"Image error: {save_path}")
             
-        return edition_item
+        return edited_item
 
 
 if __name__ == "__main__":

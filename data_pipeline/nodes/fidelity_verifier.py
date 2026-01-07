@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils import proxy_off
 
 class FidelityVerifier:
-    def __init__(self):
+    def __init__(self, model_name):
         """
         Initialize the verifier and configure the OpenAI-compatible API client.
         """
@@ -18,7 +18,7 @@ class FidelityVerifier:
             api_key=api_key,
             base_url=base_url,
         )
-        self.model_name = "Qwen/Qwen3-VL-235B-A22B-Thinking" 
+        self.model_name = model_name
         print(f"Qwen-VL API Verifier initialized.")
 
     def check_physics_vqa(self, image_path):
@@ -47,6 +47,7 @@ class FidelityVerifier:
                     "2. Distortion: Is the image or its geometry distorted, deformed, or melted?\n"
                     "3. Unrealistic Scale: Are relative sizes of objects illogical (e.g., a giant cat)?\n"
                     "4. Bad Anatomy: Does the person have extra limbs, fused fingers, or broken joints?\n\n"
+                    "5. Residual Bounding Boxes: Are there any unremoved red bounding boxes visible in the image?\n\n"
                     "Output Format: For each issue found, provide: [Error Message] - [Suggestion (Point error categoty and give refinement suggestion)]. "
                     "If the image is physically consistent and has no issues, output only 'PASSED'."
                 )
@@ -88,7 +89,7 @@ class FidelityVerifier:
         vqa_result = self.check_physics_vqa(image_path)
         
         if not vqa_result["passed"]:
-            return f"REJECTED: {vqa_result["reason"]}"
+            return f"REJECTED: {vqa_result['reason']}"
 
         return "ACCEPTED"
 
