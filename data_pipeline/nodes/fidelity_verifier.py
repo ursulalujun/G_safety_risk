@@ -12,6 +12,7 @@ class FidelityVerifier:
         """
         Initialize the verifier and configure the OpenAI-compatible API client.
         """
+        proxy_off()
         api_key = os.environ['VERIFY_API_KEY']
         base_url = os.environ['VERIFY_API_URL']
         self.client = OpenAI(

@@ -89,6 +89,10 @@ Based on your analysis, output a single JSON object with the following structure
 
 class HazardVerifier:
     def __init__(self, detector_model):
+        if 'qwen' in detector_model.lower():
+            proxy_off()
+        else:
+            proxy_on()
         key = os.getenv("ANNOTATION_API_KEY")
         url = os.getenv("ANNOTATION_API_URL")
         self.client = openai.OpenAI(api_key=key, base_url=url)
@@ -100,7 +104,7 @@ class HazardVerifier:
         """
         base64_image = image_to_base64(image)
 
-        edit_desc = risk_info["edition_plan"]
+        edit_desc = risk_info["editing_plan"]
         safety_principle = risk_info["safety_principle"]
         safety_hazard = risk_info["safety_hazard"]
         if hazard_type == "environmental":
@@ -215,6 +219,8 @@ class HazardVerifier:
             messages=messages,
         ).choices[0].message.content
 
+        if "</think>" in response:
+            response = response.split("</think>")[-1]
         check_result = parse_json(response)
 
         if "accepted" in check_result["final_answer"].lower(): 

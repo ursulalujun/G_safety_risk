@@ -26,10 +26,12 @@ def proxy_off():
         del os.environ['HTTPS_PROXY']
 
 def proxy_on():
-    os.environ['http_proxy']=os.environ['PROXY_URL']
-    os.environ['https_proxy']=os.environ['PROXY_URL']
-    os.environ['HTTP_PROXY']=os.environ['PROXY_URL']
-    os.environ['HTTPS_PROXY']=os.environ['PROXY_URL']
+    PROXY_URL="http://luxiaoya:U8z9i4bL10OCVplAEbVDbdP8t4EYnmJNFmRNQ0AK3cZeJjOjUDwhfcHf4fFz@proxy.h.pjlab.org.cn:23128"
+    os.environ['http_proxy']=PROXY_URL
+    os.environ['https_proxy']=PROXY_URL
+    os.environ['HTTP_PROXY']=PROXY_URL
+    os.environ['HTTPS_PROXY']=PROXY_URL
+    os.environ['no_proxy']="10.0.0.0/8,100.96.0.0/12,172.16.0.0/12,192.168.0.0/16,127.0.0.1/,100.99.182.15/,localhost,.pjlab.org.cn,.h.pjlab.org.cn"
 
 def parse_base64_image(response):
     pattern = r'base64,([a-zA-Z0-9+/=]+)'
@@ -80,11 +82,15 @@ def parse_json(response):
     match = re.search(brace_pattern, response)
     if match:
         json_str = match.group(0)
+        json_str = json_str.replace(r"\'", "'")
         try:
-            # Attempt parsing with ast.literal_eval for JSON-like structures
-            return ast.literal_eval(json_str)
-        except (ValueError, SyntaxError):
-            pass
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            try:
+                # Attempt parsing with ast.literal_eval for JSON-like structures
+                return ast.literal_eval(json_str)
+            except (ValueError, SyntaxError):
+                pass
 
     # Try parsing key-value pairs for simpler JSON structures
     json_data = {}

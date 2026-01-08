@@ -3176,7 +3176,7 @@
       "pre_image_path": "data/environmental/check_image/dinette/NYU0344.jpg",
       "edit_image_path": "data/environmental/edit_image/dinette/NYU0344__0.png",
       "bbox_annotation": {},
-      "feedback_0": ": [Missing Hazard-Related Area] hazard_area: the sharp, broken metal slat on the chair's backrest, Refinement Suggestion: add missing objects"
+      "feedback_0": "[Missing Hazard-Related Area] hazard_area: the sharp, broken metal slat on the chair's backrest, Refinement Suggestion: add missing objects"
     },
     "state": "failed"
   },

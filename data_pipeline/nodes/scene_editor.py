@@ -17,7 +17,7 @@ from tqdm import tqdm
 import torch
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from utils import calculate_diff_bbox, visualize_bbox, parse_base64_image
+from utils import calculate_diff_bbox, visualize_bbox, parse_base64_image, proxy_on
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
@@ -28,7 +28,7 @@ client = openai.OpenAI(api_key=key, base_url=url)
 
 crucial_rules = """### Crucial Rules: ###
 1.  **Edit Within Bounding Box:** The red bounding box in the input image defines the inpainting mask. Perform edits within this area.
-2.  **Follow Edition Plan Exactly:** You must **strictly adhere** to every detail provided in the **Edition PLAN** (textual, colors, size, materials, spatial relationship, etc.).
+2.  **Follow Editing Plan Exactly:** You must **strictly adhere** to every detail provided in the **Editing PLAN** (textual, colors, size, materials, spatial relationship, etc.).
 3.  **Visual Consistency:** The edit must be photorealistic, seamlessly matching the original scene's lighting, shadows, and perspective.
 4.  **Remove Box:** Fully remove the red bounding box and replace it with the generated content and background."""
 
@@ -44,13 +44,13 @@ Return only the final edited image.
 
 Your input:
 - Safety Principle: {safety_principle}
-- Edition Plan: {edition_plan}
-- Risk-related Area: {hazard_related_area}{feedback}"""
+- Editing Plan: {editing_plan}
+- Risk-related Area: {hazard_related_area}"""
 
 # ### Inputs: ###
 # - **Image:** The source image containing the red bounding box annotation.
 # - **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
-# - **Edition Plan:** A precise instruction detailing the visual modification required.
+# - **Editing Plan:** A precise instruction detailing the visual modification required.
 # - **Risk-related Area:** The specific area where a safety risk exists, or the visual cue identifying a risk in the environment.{feedback_param_info}
 
 ACTION_TRIGGERED_EDITION_TEMPLATE="""You are an expert AI image editor specializing in realistic scene manipulation and simulating **Action-Triggered Safety Risks**.
@@ -65,18 +65,28 @@ Return only the final edited image.
 Your input:
 - Safety Principle: {safety_principle}
 - Instruction: {instruction}
-- Edition Plan: {edition_plan}
-- Risk-related Area {hazard_related_area}{feedback}"""
+- Editing Plan: {editing_plan}
+- Risk-related Area {hazard_related_area}"""
 
 # ### Inputs: ###
 # - **Image:** The source image containing the red bounding box annotation.
 # - **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
 # - **Instruction:** The specific human task or action that makes the generated situation dangerous.
-# - **Edition Plan:** A precise instruction detailing the visual modification required.
-# - **Risk-related Area:** The specific area where a safety risk exists, or the visual cue identifying a risk in the environment.{feedback_param_info}
+# - **Editing Plan:** A precise instruction detailing the visual modification required.
+# - **Risk-related Area:** The specific area where a safety risk exists, or the visual cue identifying a risk in the environment.
+# - **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Editing Plan**, you must override the Plan and strictly follow the Feedback.
+
+EDITION_TEMPLATE_WITH_FEEDBACK="""
+The provided image is an AI-generated output that contains specific errors. Please refine the image by addressing the issues listed in the feedback below.
+
+Critical: Bounding boxes indicate error locations only. Remove them entirely and fill the area with appropriate generated content/background.
+
+Feedback: Critique from previous iteration: [Error type], [Refinement Suggestion]. Strictly follow this guidance.
+Input Feedback: {feedback}
+"""
 
 # simple template for open-source edition model
-SIMPLE_TEMPLATE="""{edition_plan}
+SIMPLE_TEMPLATE="""{editing_plan}
 **Notice:** The red bounding box in the input image is your "inpainting mask" or area for edition. Please completely remove the red bounding box in your edited image."""
 
 class SceneEditor:
@@ -89,6 +99,7 @@ class SceneEditor:
             self.pipeline.to("cuda")
             self.pipeline.set_progress_bar_config(disable=None)
         else:
+            proxy_on()
             key = os.getenv("PLAN_API_KEY")
             url = os.getenv("PLAN_API_URL")
             self.client = openai.OpenAI(api_key=key, base_url=url)
@@ -97,17 +108,17 @@ class SceneEditor:
     def edit_scene(self, edited_item, hazard_type, feedback, iter_num=0, max_retries=3):
         risk = edited_item['safety_risk']
         safety_principle = risk['safety_principle']
-        edition_plan = risk['edition_plan']
+        editing_plan = risk['editing_plan']
         hazard_related_area = risk['hazard_related_area']
         if iter_num > 0 and feedback is not None:
-            image_path = risk['edit_image_path']
-            save_path = image_path.replace(f'{iter_num-1}.png', f'{iter_num}.png')
-            feedback_param_info = "\n- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Edition Plan**, you must override the Plan and strictly follow the Feedback.\n"
+            image_path = risk['edit_image_path'].replace('edit_image', 'annotate_image')
+            if not os.path.exists(image_path):
+                image_path = risk['edit_image_path']
+            save_path = risk['edit_image_path'].replace(f'{iter_num-1}.png', f'{iter_num}.png')
             feedback = f"\n- Feedback: {feedback}"
         else:
             image_path = risk['pre_image_path']
             save_path = image_path.replace('check_image', 'edit_image')[:-4]+'__'+f'{iter_num}.png'
-            feedback_param_info=""
             feedback=""
         if not os.path.exists(image_path):
             print(f"[ERROR]: {image_path} not find image!")
@@ -125,19 +136,15 @@ class SceneEditor:
         if hazard_type.lower()=="action_triggered":
             instruction = risk['instruction']
             prompt = ACTION_TRIGGERED_EDITION_TEMPLATE.format(safety_principle=safety_principle, 
-                                                        edition_plan=edition_plan,
+                                                        editing_plan=editing_plan,
                                                         instruction=instruction, 
                                                         hazard_related_area=hazard_related_area,
-                                                        crucial_rules=crucial_rules,
-                                                        # feedback_param_info=feedback_param_info,
-                                                        feedback=feedback) 
+                                                        crucial_rules=crucial_rules) 
         else:
             prompt = ENVIRONMENTAL_EDITION_TEMPLATE.format(safety_principle=safety_principle, 
-                                                        edition_plan=edition_plan, 
+                                                        editing_plan=editing_plan, 
                                                         hazard_related_area=hazard_related_area,
-                                                        crucial_rules=crucial_rules,
-                                                        # feedback_param_info=feedback_param_info,
-                                                        feedback=feedback)
+                                                        crucial_rules=crucial_rules)
         
         if not self.local_model:
             messages=[
@@ -177,13 +184,16 @@ class SceneEditor:
                         img_data = parse_base64_image(image_base64)
                         image_bytes = base64.b64decode(img_data)
                 except Exception as e:
-                    print(f"⚠️ [Attempt {attempt}/{max_retries}] 处理失败: {image_path} | Error: {e}")
+                    print(f"⚠️ [Attempt {attempt}/{max_retries}] Editing failed: {image_path} | Error: {e}")
                     if attempt < max_retries: # response.choices[0].finish_reason != "content_filter" and 
                         time.sleep(1)  
                     else:
                         raise e 
         else:
-            prompt = SIMPLE_TEMPLATE.format(edition_plan=edition_plan)
+            if feedback is None:
+                prompt = SIMPLE_TEMPLATE.format(editing_plan=editing_plan)
+            else:
+                prompt = EDITION_TEMPLATE_WITH_FEEDBACK.format(feedback=feedback)
             image = Image.open(image_path).convert("RGB")
             inputs = {
                 "image": image,
@@ -242,8 +252,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    with open(f'{args.hazard_type}/edition_plan.json', 'r') as f:
-        edition_plan = json.load(f)
+    with open(f'{args.hazard_type}/editing_plan.json', 'r') as f:
+        editing_plan = json.load(f)
     
     edit_folder = os.path.join(args.hazard_type, "edit_image")
     if not os.path.exists(edit_folder):
@@ -256,17 +266,17 @@ if __name__ == "__main__":
     editor = SceneEditor(args.editor_model, local_flag)
     
     import ipdb; ipdb.set_trace()
-    editor.edit_scene(edition_plan[0], args.hazard_type)
+    editor.edit_scene(editing_plan[0], args.hazard_type)
 
-    results = [None] * len(edition_plan)
+    results = [None] * len(editing_plan)
 
     with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
         future_to_index = {
             executor.submit(editor.edit_scene, plan, args.hazard_type): i 
-            for i, plan in enumerate(edition_plan)
+            for i, plan in enumerate(editing_plan)
         }
 
-        with tqdm(total=len(edition_plan), desc="🖼️ 处理图像") as pbar:
+        with tqdm(total=len(editing_plan), desc="🖼️ 处理图像") as pbar:
             for future in as_completed(future_to_index):
                 idx = future_to_index[future] 
                 try:

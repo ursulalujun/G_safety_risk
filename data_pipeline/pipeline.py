@@ -7,12 +7,12 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-from nodes.edition_planner import EditingPlanner
+from nodes.editing_planner import EditingPlanner
 from nodes.fidelity_verifier import FidelityVerifier
 from nodes.hazard_verifier import HazardVerifier
 from nodes.scene_editor import SceneEditor
 
-from utils import extract_and_plot_principles
+from utils import extract_and_plot_principles, proxy_off, proxy_on
 
 class RiskWeaverPipeline:
     def __init__(self, args):
@@ -52,7 +52,7 @@ class RiskWeaverPipeline:
                 edited_item = self.editor.edit_scene(editing_item, self.args.hazard_type, 
                                                      current_feedback, attempt)
             except Exception as e:
-                print(f"[-] Scene Edition failed for {image_path}: {e}")
+                print(f"[-] Scene Editing failed for {image_path}: {e}")
                 return None
                 # continue
 
@@ -80,12 +80,12 @@ class RiskWeaverPipeline:
             detective_res = self.hazard_detective.verify_object(edit_img_path, pil_img, objects_to_detect, risk_data, self.args.hazard_type)
             
             if "REJECTED" in detective_res:
-                current_feedback = f"{detective_res.split('REJECTED')[-1]}, Refinement Suggestion: add missing objects"
+                current_feedback = f"{detective_res.split('REJECTED:')[-1]}, Refinement Suggestion: add missing objects in this description: {risk_data['editing_plan']}"
                 risk_data[f"feedback_{attempt}"] = current_feedback
                 # print(f"[!] Attempt {attempt} Rejected for {os.path.basename(image_path)}: {current_feedback}")
-                # continue
-                edited_item["state"]="failed"
-                return edited_item
+                continue
+                # edited_item["state"]="failed"
+                # return edited_item
             
             annotate_img_path = edit_img_path.replace('edit_image', 'annotate_image')
             anno_pil_img = Image.open(annotate_img_path).convert("RGB")
@@ -98,8 +98,8 @@ class RiskWeaverPipeline:
                 current_feedback = f"Hazard Simulation Error, Refinement Suggestion{state_res.split('REJECTED')[-1]}"
                 risk_data[f"feedback_{attempt}"] = current_feedback
                 # print(f"[!] Attempt {attempt} Rejected for {os.path.basename(image_path)}: {current_feedback}")
-                edited_item["state"]="failed"
-                return edited_item
+                # edited_item["state"]="failed"
+                # return edited_item
             else:
                 edited_item["state"]="successed"
                 return edited_item
@@ -134,9 +134,12 @@ def main():
     parser.add_argument('--max_retries', type=int, default=3)
     args = parser.parse_args()
 
+    if os.path.exists(args.editor_model):
+        args.max_workers = 1
+
     # Setup directories
-    root_folder = os.path.join("data", args.hazard_type, "base_image")
-    meta_path = os.path.join("data", args.hazard_type, "meta_info.json")
+    root_folder = os.path.join("data", "base_image")
+    meta_path = os.path.join("data", "meta_info.json")
     output_path = os.path.join("data", args.hazard_type, "annotated_data.json")
 
     for folder_name in ["check_image", "edit_image", "annotate_image"]:
@@ -160,10 +163,10 @@ def main():
     final_results = []
 
     print(f"🚀 Starting Risk-Weaver Pipeline with {args.max_workers} workers. Processing {len(image_tasks)} images in total...")
-    
-    # import ipdb; ipdb.set_trace()
-    image_tasks = image_tasks
-    # pipeline.process_image(*image_tasks[0])
+    proxy_on()
+    import ipdb; ipdb.set_trace()
+    pipeline.process_image(*image_tasks[0])
+    image_tasks = image_tasks[:100]
     try:
         with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             future_to_path = {

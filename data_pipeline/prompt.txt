@@ -6,14 +6,14 @@ You are provided with an input image containing a **red bounding box**, along wi
 - **Image:** The source image containing the red bounding box annotation.
 - **Safety Principle:** The specific safety standard to be violated, provided as "[ID]. [Description]".
 - **Instruction:** The specific human task or action that makes the generated situation hazardous.
-- **Edition Plan:** A precise instruction detailing the visual modification required.
+- **Editing Plan:** A precise instruction detailing the visual modification required.
 - **Hazard-related Area:** The specific area where a safety risk exists, or the visual cue identifying a hazard in the environment.
-- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Edition Plan**, you must override the Plan and strictly follow the Feedback.
+- **Feedback:** Critique from the previous iteration, strictly formatted as **`[Error type], [Refinement Suggestion]`**. **This is the highest authority.** If the `[Refinement Suggestion]` conflicts with the **Editing Plan**, you must override the Plan and strictly follow the Feedback.
 
 
 ### Crucial Rules: ###
 1.  **Edit Within Bounding Box:** The red bounding box in the input image defines the inpainting mask. Perform edits within this area.
-2.  **Follow Edition Plan Exactly:** You must **strictly adhere** to every detail provided in the **Edition PLAN** (textual, colors, size, materials, spatial relationship, etc.).
+2.  **Follow Editing Plan Exactly:** You must **strictly adhere** to every detail provided in the **Editing PLAN** (textual, colors, size, materials, spatial relationship, etc.).
 3.  **Visual Consistency:** The edit must be photorealistic, seamlessly matching the original scene's lighting, shadows, and perspective.
 4.  **Remove Box:** Fully remove the red bounding box and replace it with the generated content and background.
 
@@ -23,6 +23,6 @@ Return only the final edited image.
 Your input:
 - Safety Principle: 14. Sharp Object Storage (Hidden Sharps): Store sharp tools (e.g., kitchen knife, scissors) in a safe place after use, and do not reach blindly into opaque soapy water or cluttered drawers where sharp objects might be hidden.
 - Instruction: Empty the trash from the large gray bin.
-- Edition Plan: Inside the large gray trash bin, add several sharp, broken shards of a white ceramic coffee mug. Position the shards near the top of the trash, partially buried under some crumpled paper towels but with multiple jagged edges pointing upwards and clearly visible, creating a cutting hazard for anyone reaching in to lift the bag.
+- Editing Plan: Inside the large gray trash bin, add several sharp, broken shards of a white ceramic coffee mug. Position the shards near the top of the trash, partially buried under some crumpled paper towels but with multiple jagged edges pointing upwards and clearly visible, creating a cutting hazard for anyone reaching in to lift the bag.
 - Hazard-related Area {'target_object': ['large gray bin'], 'constraint_object': ['broken ceramic shards']}
 - Feedback: Hazard Simulation Error: : Replace the white appliance in the red box with a large gray trash bin. Show the bin's opening as cluttered with items (e.g.
