@@ -12,6 +12,7 @@ import re
 import requests
 import base64
 from io import BytesIO
+from typing import Optional
 
 additional_colors = [colorname for (colorname, colorcode) in ImageColor.colormap.items()]
 
@@ -108,17 +109,17 @@ def parse_json(response):
 
 def image_to_base64(image: Image.Image, fmt='PNG') -> str:
     """
-    将 PIL Image 对象转换为 Base64 字符串
-    :param image: PIL Image 对象
-    :param fmt: 保存格式 (如 'PNG', 'JPEG')
-    :return: Base64 字符串
+    Convert PIL Image object to Base64 string
+    :param image: PIL Image object
+    :param fmt: Save format (e.g., 'PNG', 'JPEG')
+    :return: Base64 string
     """
     output_buffer = BytesIO()
-    # 将图片保存到内存流中，而不是文件
+    # Save image to memory stream instead of file
     image.save(output_buffer, format=fmt)
-    # 获取字节数据
+    # Get byte data
     byte_data = output_buffer.getvalue()
-    # 编码并转换为字符串
+    # Encode and convert to string
     base64_str = base64.b64encode(byte_data).decode('utf-8')
     return base64_str
 
@@ -203,93 +204,109 @@ def visualize_bbox(img, bboxes):
 def extract_and_plot_principles(save_path, data_list):
     principle_ids = []
 
-    # 2. 遍历列表提取编号
+    # 2. Iterate through list to extract IDs
     for item in data_list:
-        # 获取 safety_risk 列表 (防止某些项没有 key)
+        # Get safety_risk list (prevent missing key errors)
         risk = item.get("safety_risk", {})
         if risk is None:
             continue
         principle_text = risk.get("safety_principle", "")
-        
+
         if principle_text:
-            # 逻辑：通过 '.' 分割字符串，取第一部分，并去除首尾空格
-            # 例如 "31. Slipping..." -> 分割成 ["31", " Slipping..."] -> 取 "31"
+            # Logic: Split string by '.', take first part, and remove leading/trailing spaces
+            # Example: "31. Slipping..." -> split into ["31", " Slipping..."] -> take "31"
             try:
                 p_id = principle_text.split('.')[0].strip()
-                # 简单校验一下提取出来的是否是数字
+                # Simple validation to check if extracted value is a number
                 if p_id.isdigit():
                     principle_ids.append(int(p_id))
                 else:
-                    print(f"警告: 无法从以下文本提取有效数字编号: {principle_text}")
+                    print(f"Warning: Cannot extract valid numeric ID from: {principle_text}")
             except IndexError:
-                print(f"警告: 格式不符合预期 (找不到 '.'): {principle_text}")
+                print(f"Warning: Format does not match expected (cannot find '.'): {principle_text}")
 
-    # 3. 统计频次
-    # 结果类似于: {'31': 1, '9': 1}
+    # 3. Count frequencies
+    # Result looks like: {'31': 1, '9': 1}
     id_counts = Counter(principle_ids)
-    
+
     if not id_counts:
-        print("未提取到任何 Safety Principle 编号，无法绘图。")
+        print("No Safety Principle IDs extracted, cannot plot.")
         return
 
     id_counts = {k: id_counts[k] for k in sorted(id_counts.keys())}
-    print("分布统计结果:", id_counts)
-    
-    # 4. 绘制饼状图
-    labels = [f"ID: {k}" for k in sorted(id_counts.keys())] # 标签
-    sizes = id_counts.values() # 数值
-    
-    plt.figure(figsize=(8, 6)) # 设置画布大小
-    
-    # 绘制饼图
-    # autopct='%1.1f%%' 用于显示百分比
-    # startangle=140 设置起始角度
+    print("Distribution statistics:", id_counts)
+
+    # 4. Draw pie chart
+    labels = [f"ID: {k}" for k in sorted(id_counts.keys())] # Labels
+    sizes = id_counts.values() # Values
+
+    plt.figure(figsize=(8, 6)) # Set canvas size
+
+    # Draw pie chart
+    # autopct='%1.1f%%' for displaying percentages
+    # startangle=140 sets starting angle
     plt.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, shadow=True)
-    
-    plt.axis('equal')  # 保证饼图是圆的
-    plt.title('Distribution of Safety Principles') # 标题
-    
-    # 显示图表
+
+    plt.axis('equal')  # Ensure pie chart is circular
+    plt.title('Distribution of Safety Principles') # Title
+
+    # Display chart
     plt.savefig(os.path.join(save_path, 'distribution.png'))
 
 def calculate_diff_bbox(orig_path, gen_path, diff_threshold=30, expand_margin=10):
     """
-    只负责计算差异和 BBox 数据。
+    Only responsible for calculating difference and BBox data.
     """
     img_orig = cv2.imread(orig_path)
     img_gen = cv2.imread(gen_path)
-    
+
     if img_orig is None or img_gen is None:
-        raise ValueError("无法读取图片。")
+        raise ValueError("Cannot read image.")
 
     h_orig, w_orig = img_orig.shape[:2]
 
-    # Resize 生成图回原图尺寸
+    # Resize generated image back to original image size
     img_gen_resized = cv2.resize(img_gen, (w_orig, h_orig), interpolation=cv2.INTER_AREA)
 
-    # 计算差异
+    # Calculate difference
     diff = cv2.absdiff(img_orig, img_gen_resized)
     diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
     _, mask = cv2.threshold(diff_gray, diff_threshold, 255, cv2.THRESH_BINARY)
 
-    # 去噪
+    # Denoise
     kernel = np.ones((5, 5), np.uint8)
     mask_clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask_clean = cv2.dilate(mask_clean, kernel, iterations=2)
 
-    # 查找 BBox
+    # Find BBox
     points = cv2.findNonZero(mask_clean)
     bbox = (0, 0, 0, 0)
 
     if points is not None:
         x, y, w, h = cv2.boundingRect(points)
-        
-        # 扩大边距
+
+        # Expand margin
         x = max(0, x - expand_margin)
         y = max(0, y - expand_margin)
         w = min(w_orig - x, w + 2 * expand_margin)
         h = min(h_orig - y, h + 2 * expand_margin)
-        
+
         bbox = (x, y, x+w, y+h)
 
     return img_gen_resized, bbox
+
+
+def extract_principle_id(safety_principle_text: str) -> Optional[int]:
+    """
+    Extract principle ID from safety principle text.
+
+    Args:
+        safety_principle_text: Text like "1. Flammable Items Near Heat: Ensure..."
+
+    Returns:
+        The principle ID as integer, or None if not found
+    """
+    if not safety_principle_text:
+        return None
+    match = re.match(r'(\d+)\.\s*', safety_principle_text.strip())
+    return int(match.group(1)) if match else None

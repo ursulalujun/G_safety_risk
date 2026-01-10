@@ -21,7 +21,7 @@ if __name__ == "__main__":
 
     evaluator = SafetyEvaluator(model_name="checkpoints/Qwen3-VL-32B-Instruct", img_save_folder="./")
 
-    # 加载数据
+    # Load data
     with open(args.file_path, 'r', encoding='utf-8') as f:
         gt_dataset = json.load(f)
 

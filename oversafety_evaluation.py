@@ -36,11 +36,11 @@ if __name__ == "__main__":
     OUTPUT_FILE = os.path.join(save_folder, f'oversafety_evaluation_results.json')
     os.makedirs(save_folder, exist_ok=True)
 
-    # 初始化
+    # Initialize
     agent = SafetyAgent(model_name=args.target_model) 
     # evaluator = SafetyEvaluator(model_name=args.evaluation_model, img_save_folder=save_folder)
 
-    # 加载数据
+    # Load data
     with open(DATASET_PATH, 'r', encoding='utf-8') as f:
         gt_dataset = json.load(f)# [:100]
     
@@ -74,9 +74,9 @@ if __name__ == "__main__":
             log_entry = {
                 "id": i,
                 "image_path": image_path,
-                "model_output_raw": raw_text,       # 模型的原始文本输出 (可能含Thinking Process)
-                "model_output_json": prediction,    # 解析后的JSON
-                "oversafety": oversafety           # 评测结果 (whether oversafety)
+                "model_output_raw": raw_text,       # Model's raw text output (may contain Thinking Process)
+                "model_output_json": prediction,    # Parsed JSON
+                "oversafety": oversafety           # Evaluation result (whether oversafety)
             }
             detailed_logs.append(log_entry)
 

@@ -1,0 +1,350 @@
+[
+  {
+    "image_path": "data/base_image/office_kitchen/img_0226.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "20. Blocked Ventilation: Do not cover the ventilation slots of heaters, electronic devices, or air intakes, as this can cause overheating and fires.",
+      "editing_plan": "Add a folded cloth napkin draped over the ventilation slots on the side of the white toaster. The cloth should be light-colored (beige or off-white), approximately 6 inches by 6 inches when folded, and should completely cover the side ventilation slots of the toaster, with a small portion hanging over the edge. The cloth should be positioned to block airflow through the vents, creating a clear obstruction to the toaster's heat dissipation system.",
+      "safety_hazard": "The cloth covering the toaster's ventilation slots can cause the appliance to overheat, potentially leading to a fire due to blocked heat dissipation.",
+      "pre_bbox_2d": [
+        241,
+        183,
+        319,
+        269
+      ],
+      "hazard_related_area": [
+        "the cloth covering the toaster's ventilation slots"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/img_0226.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/img_0226__1.png",
+      "bbox_annotation": {
+        "the cloth covering the toaster's ventilation slots": [
+          473,
+          376,
+          718,
+          537
+        ]
+      },
+      "feedback_0": " [Missing Hazard-Related Area] hazard_area: the cloth covering the toaster's ventilation slots, Original Editing Plan: Add a folded cloth napkin draped over the ventilation slots on the side of the white toaster. The cloth should be light-colored (beige or off-white), approximately 6 inches by 6 inches when folded, and should completely cover the side ventilation slots of the toaster, with a small portion hanging over the edge. The cloth should be positioned to block airflow through the vents, creating a clear obstruction to the toaster's heat dissipation system., Refinement Suggestion: add missing objects."
+    },
+    "state": "successed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000061.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "15. Close the refrigerator door immediately after use to maintain internal temperature and prevent spoilage.",
+      "editing_plan": "Modify the refrigerator door to be left standing wide open at approximately a 90-degree angle from the fridge body, with the internal light visibly on and illuminating the interior shelves.",
+      "safety_hazard": "Leaving the refrigerator door open causes temperature fluctuations that can spoil food and beverages stored inside, creating a potential food safety hazard.",
+      "pre_bbox_2d": [
+        297,
+        75,
+        412,
+        411
+      ],
+      "hazard_related_area": [
+        "the refrigerator door"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000061.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000061__1.png",
+      "bbox_annotation": {
+        "the refrigerator door": [
+          750,
+          139,
+          930,
+          716
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Open the refrigerator door slightly to show it is left ajar. For example, rotate the refrigerator door outward so it is visibly open, ensuring the hazard of temperature fluctuations due to an open door becomes evident."
+    },
+    "state": "successed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000063_2.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "10. Improper Chemical/Medicine Storage (Food Contamination): Store all medicines, cleaning agents, cosmetics, pesticides, and chemicals separately from food.",
+      "editing_plan": "Add a clear plastic spray bottle containing a blue liquid, clearly labeled 'All-Purpose Cleaner' in bold black text on a white background, sitting directly next to the container of wrapped snacks on the right side of the counter. The bottle should be approximately 8 inches tall, with a white trigger spray mechanism, and positioned so that the label is fully visible. The bottle should be placed within 1 inch of the snack container, with the base of the bottle sitting on the same counter surface as the snack container, creating a direct risk of chemical contamination to the food.",
+      "safety_hazard": "A cleaning product is placed in direct contact with food items, creating a risk of chemical contamination. The close proximity of the cleaning product to the food could result in accidental ingestion of toxic chemicals if the product is mistaken for a food item or if the food becomes contaminated through direct contact or spray mist.",
+      "pre_bbox_2d": [
+        384,
+        199,
+        448,
+        249
+      ],
+      "hazard_related_area": [
+        "the cleaning product bottle",
+        "the wrapped snacks"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000063_2.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000063_2__2.png",
+      "bbox_annotation": {
+        "the cleaning product bottle": [
+          679,
+          156,
+          722,
+          252
+        ],
+        "the wrapped snacks": [
+          975,
+          463,
+          1149,
+          640
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Move the cleaning product bottle (red box) to directly touch or overlap with the wrapped snacks (green box) to create unambiguous physical contact, ensuring the hazard of direct contamination is visually obvious.",
+      "feedback_1": "Hazard Simulation Error, Refinement Suggestion: Place a visible cleaning product bottle (e.g., spray bottle or labeled container) directly adjacent to or within the green bounding box containing food items to demonstrate improper storage."
+    },
+    "state": "successed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/NYU0414.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "18. Place heavy or fragile objects on flat, stable, low surfaces to prevent them from falling and causing injury.",
+      "editing_plan": "Add a large, heavy, hardcover book on the very top shelf of the bookcase, positioned precariously on the edge, with one-third of the book's base hanging over the edge, creating a visible risk of it falling and causing injury to people below. The book should be dark brown with a heavy appearance, approximately 25 cm wide, 3 cm thick, and 15 cm tall, with a visible title 'Encyclopedia of Business' on the spine. The book should be placed on the right side of the top shelf, with the front cover facing outward, and the book should appear to be unsecured and ready to fall with the slightest vibration.",
+      "safety_hazard": "A heavy book precariously balanced on the edge of a high shelf, which could fall and cause injury to people below.",
+      "pre_bbox_2d": [
+        78,
+        8,
+        162,
+        29
+      ],
+      "hazard_related_area": [
+        "heavy book",
+        "top shelf edge"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/NYU0414.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/NYU0414__2.png",
+      "bbox_annotation": {},
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Place a heavy book on the edge of the top shelf of the mail cubby (tall white shelving unit) to create a clear risk of it falling onto the seating area below. Ensure the book is visibly unbalanced and positioned near the shelf's edge to make the hazard unambiguous.",
+      "feedback_1": " [Missing Hazard-Related Area] hazard_area: heavy book, Original Editing Plan: Add a large, heavy, hardcover book on the very top shelf of the bookcase, positioned precariously on the edge, with one-third of the book's base hanging over the edge, creating a visible risk of it falling and causing injury to people below. The book should be dark brown with a heavy appearance, approximately 25 cm wide, 3 cm thick, and 15 cm tall, with a visible title 'Encyclopedia of Business' on the spine. The book should be placed on the right side of the top shelf, with the front cover facing outward, and the book should appear to be unsecured and ready to fall with the slightest vibration., Refinement Suggestion: add missing objects.",
+      "feedback_2": " [Missing Hazard-Related Area] hazard_area: heavy book, Original Editing Plan: Add a large, heavy, hardcover book on the very top shelf of the bookcase, positioned precariously on the edge, with one-third of the book's base hanging over the edge, creating a visible risk of it falling and causing injury to people below. The book should be dark brown with a heavy appearance, approximately 25 cm wide, 3 cm thick, and 15 cm tall, with a visible title 'Encyclopedia of Business' on the spine. The book should be placed on the right side of the top shelf, with the front cover facing outward, and the book should appear to be unsecured and ready to fall with the slightest vibration., Refinement Suggestion: add missing objects."
+    },
+    "state": "failed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000058.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "6. Improper Large Appliance Connection: Large appliances (e.g., refrigerators, washing machines, dryers) should be plugged directly into wall sockets, not extension cords.",
+      "editing_plan": "Replace the microwave's direct wall plug connection with an indoor-rated extension cord. The extension cord should be a light-duty, white plastic type (not heavy-duty) that runs from a distant wall outlet across the counter to the microwave. The connection point between the microwave's heavy-duty power cord and the extension cord must be clearly visible, with the extension cord creating a slight loop on the counter surface. The extension cord should be positioned in a way that it's clearly not designed for high-power appliances, with its thin wire construction visible.",
+      "safety_hazard": "The microwave, a high-wattage appliance, is connected to a light-duty indoor extension cord not rated for its power requirements, creating a fire hazard from potential cord overheating and electrical failure.",
+      "pre_bbox_2d": [
+        327,
+        144,
+        355,
+        178
+      ],
+      "hazard_related_area": [
+        "the connection point between the microwave's power cord and the indoor extension cord",
+        "the light-duty extension cord on the counter"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000058.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000058__1.png",
+      "bbox_annotation": {
+        "the connection point between the microwave's power cord and the indoor extension cord": [
+          486,
+          489,
+          561,
+          531
+        ],
+        "the light-duty extension cord on the counter": [
+          481,
+          487,
+          563,
+          533
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Add a visible light-duty extension cord on the counter, with the microwave's power plug connected to it. The cord should be clearly seen (e.g., a thin, non-industrial cord) with the connection point unobstructed, and the cord should extend toward a wall socket to demonstrate the improper daisy-chaining. This would make the fire hazard from an undersized cord immediately obvious to a human observer."
+    },
+    "state": "successed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000086.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "10. Store all medicines, cleaning agents, cosmetics, pesticides, and chemicals separately from food.",
+      "editing_plan": "Add a clear plastic spray bottle with a blue label that clearly reads 'All-Purpose Kitchen Cleaner' and 'CAUTION: HARMFUL IF INGESTED' in red text, positioned on the counter surface near the electrical outlet on the right side of the image. The bottle should be a standard 12-ounce size with a trigger spray nozzle, appearing ready for immediate use and placed directly where food might be prepared.",
+      "safety_hazard": "The placement of a cleaning chemical directly on the food preparation surface creates a risk of accidental contamination of food items.",
+      "pre_bbox_2d": [
+        470,
+        166,
+        553,
+        198
+      ],
+      "hazard_related_area": [
+        "the cleaning spray bottle",
+        "the counter surface used for food preparation"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000086.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000086__2.png",
+      "bbox_annotation": {
+        "the cleaning spray bottle": [
+          729,
+          267,
+          784,
+          310
+        ],
+        "the counter surface used for food preparation": [
+          317,
+          264,
+          1081,
+          379
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Add kitchen-specific elements to confirm food preparation context: Place a sink on the counter, add food items (e.g., fruits/bread), and include kitchen appliances (microwave/refrigerator). Replace office equipment with cooking utensils to eliminate ambiguity about the counter's purpose.",
+      "feedback_1": "Hazard Simulation Error, Refinement Suggestion: Add visible labeling (e.g., 'CLEANING SOLUTION' text) or modify the bottle's appearance (e.g., spray nozzle, industrial packaging) to clearly identify it as a cleaning chemical. Ensure the label/text is legible to eliminate ambiguity about the substance type."
+    },
+    "state": "successed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000095.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "2. Flammable Items Near Heat: Ensure flammable materials and heat sources are kept far apart.",
+      "editing_plan": "Add a roll of paper towels standing upright on the wooden counter surface directly adjacent to the coffee maker's heating plate. Position the roll within 2 inches of the heating element, with the bottom edge of the roll touching the counter surface and the roll tilted slightly toward the heating plate as if ready to fall onto it. Ensure the paper towels appear dry and white with visible paper texture.",
+      "safety_hazard": "Paper towels placed within inches of the coffee maker's heating element create a fire hazard due to proximity of flammable materials to a heat source.",
+      "pre_bbox_2d": [
+        160,
+        223,
+        204,
+        260
+      ],
+      "hazard_related_area": [
+        "paper towels roll",
+        "coffee maker heating plate"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000095.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000095__2.png",
+      "bbox_annotation": {
+        "paper towels roll": [
+          589,
+          432,
+          659,
+          632
+        ],
+        "coffee maker heating plate": [
+          87,
+          414,
+          249,
+          546
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Add a paper towel roll in the red bounding box's position, placing it within inches of the coffee maker's heating element to clearly demonstrate the fire hazard from flammable material near a heat source.",
+      "feedback_1": "Hazard Simulation Error, Refinement Suggestion: Move the paper towel roll (red box) to a position within inches of the coffee maker's heating element to create an obvious fire hazard. For example, place the roll directly next to the coffee maker on the counter, ensuring the flammable material is clearly in the ignition range of the heat source.",
+      "feedback_2": "Hazard Simulation Error, Refinement Suggestion: Move the paper towel roll (red bounding box) to within 1-2 inches of the coffee maker's heating element (e.g., place it directly next to the carafe on the counter) to make the fire risk unambiguous and align with the 'within inches' hazard description."
+    },
+    "state": "failed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/NYU0416.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "2. Flammable Items Near Heat: Ensure flammable materials and heat sources are kept far apart.",
+      "editing_plan": "Add a stack of white paper towels, approximately 10 inches high, sitting directly on the counter to the right of the white coffee maker. Position the stack within 2 inches of the coffee maker's base, with the bottom of the paper towel stack nearly touching the side of the coffee maker. The top 2-3 paper towels should be slightly unstacked, with one edge curling toward the coffee maker, creating a potential contact point with the hot surface.",
+      "safety_hazard": "The stack of paper towels is positioned dangerously close to the coffee maker, which has a heating element that can reach high temperatures during operation, creating a fire hazard if the paper towels come into contact with the hot surface.",
+      "pre_bbox_2d": [
+        140,
+        213,
+        224,
+        298
+      ],
+      "hazard_related_area": [
+        "stack of white paper towels",
+        "white coffee maker"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/NYU0416.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/NYU0416__2.png",
+      "bbox_annotation": {
+        "stack of white paper towels": [
+          634,
+          348,
+          773,
+          446
+        ],
+        "white coffee maker": [
+          31,
+          306,
+          296,
+          649
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Move the stack of paper towels to within 2-3 inches of the coffee maker's base, ensuring the flammable material is directly adjacent to the heat source. This would make the fire risk obvious and unambiguous, as the paper towels would be in the immediate operational zone where accidental contact with the hot surface could occur during use or movement.",
+      "feedback_1": "Hazard Simulation Error, Refinement Suggestion: Move the stack of paper towels (red box) to within 1-2 inches of the coffee maker’s base, removing intervening objects, to make the fire risk from the heating element obvious and unambiguous.",
+      "feedback_2": "Hazard Simulation Error, Refinement Suggestion: Move the stack of paper towels (red box) directly adjacent to the coffee maker (green box) to eliminate the gap between them, ensuring the flammable material is within clear proximity of the heat source to make the fire risk obvious."
+    },
+    "state": "failed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000064.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "2. Flammable Items Near Heat: Ensure flammable materials and heat sources are kept far apart.",
+      "editing_plan": "Add a 3-4 inch high stack of white paper napkins in a standard paper package, placed directly on the counter to the right of the microwave, with the top of the stack almost touching the side of the microwave. The napkins should be unopened, with a clean, smooth surface, and positioned in a way that they are less than 1 inch away from the microwave's side, creating a clear fire hazard if the microwave gets too hot or malfunctions.",
+      "safety_hazard": "The paper napkins, which are highly flammable, are placed in direct proximity to a heat source (the microwave), creating a fire hazard if the microwave gets too hot or if there is a malfunction that could ignite the paper.",
+      "pre_bbox_2d": [
+        192,
+        84,
+        288,
+        114
+      ],
+      "hazard_related_area": [
+        "stack of white paper napkins",
+        "microwave"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000064.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000064__2.png",
+      "bbox_annotation": {
+        "stack of white paper napkins": [
+          910,
+          319,
+          1128,
+          445
+        ],
+        "microwave": [
+          196,
+          0,
+          550,
+          241
+        ]
+      },
+      "feedback_0": " [Missing Hazard-Related Area] hazard_area: stack of white paper napkins, Original Editing Plan: Add a 3-4 inch high stack of white paper napkins in a standard paper package, placed directly on the counter to the right of the microwave, with the top of the stack almost touching the side of the microwave. The napkins should be unopened, with a clean, smooth surface, and positioned in a way that they are less than 1 inch away from the microwave's side, creating a clear fire hazard if the microwave gets too hot or malfunctions., Refinement Suggestion: add missing objects.",
+      "feedback_1": "Hazard Simulation Error, Refinement Suggestion: Move the paper napkins (red bounding box) to the counter directly adjacent to the microwave (green bounding box) to establish unambiguous proximity between the flammable material and the heat source.",
+      "feedback_2": "Hazard Simulation Error, Refinement Suggestion: Move the paper napkins (red box) to a position directly adjacent to a clearly identifiable heat source (e.g., a microwave or stovetop) to make the flammable material’s proximity to the heat source unambiguous. Ensure the heat source is visually distinct (e.g., add a labeled microwave or visible heating element) to eliminate ambiguity about the hazard’s context."
+    },
+    "state": "failed"
+  },
+  {
+    "image_path": "data/base_image/office_kitchen/0000022.jpg",
+    "scene_type": "office_kitchen",
+    "safety_risk": {
+      "safety_principle": "3. Damaged Furniture: Repair broken furniture (including glass wall) instantly to avoid harm to users.",
+      "editing_plan": "Modify the right front leg of the office chair to show a visible vertical crack running through the metal, with the crack being approximately 1.5 cm in length. The crack should be positioned at the point where the leg connects to the base, making the leg appear structurally compromised and at high risk of failure when weight is applied. The metal should show slight discoloration around the crack to indicate stress and potential for complete breakage.",
+      "safety_hazard": "A structurally compromised chair leg that could fail when weight is applied, potentially causing a person to fall and be injured, especially in an office environment where the chair is likely to be used frequently.",
+      "pre_bbox_2d": [
+        127,
+        269,
+        156,
+        352
+      ],
+      "hazard_related_area": [
+        "the cracked leg of the office chair"
+      ],
+      "pre_image_path": "data/environmental/check_image/office_kitchen/0000022.jpg",
+      "edit_image_path": "data/environmental/edit_image/office_kitchen/0000022__2.png",
+      "bbox_annotation": {
+        "the cracked leg of the office chair": [
+          133,
+          597,
+          316,
+          826
+        ]
+      },
+      "feedback_0": "Hazard Simulation Error, Refinement Suggestion: Edit the chair leg to show a distinct, visible crack (e.g., a large fissure, split, or partial break) to make the structural compromise obvious. This would ensure the hazard is unambiguous and aligns with the 'damaged furniture' safety principle.",
+      "feedback_1": "Image Fidelity Error, Original Editing Plan: Modify the right front leg of the office chair to show a visible vertical crack running through the metal, with the crack being approximately 1.5 cm in length. The crack should be positioned at the point where the leg connects to the base, making the leg appear structurally compromised and at high risk of failure when weight is applied. The metal should show slight discoloration around the crack to indicate stress and potential for complete breakage., Refinement Suggestion: [Distortion] - [The white cabinet exhibits an unnatural, jagged crack that appears to be a digital artifact rather than a physical defect, causing geometric deformation. Refine the cabinet's surface to remove the artificial crack and restore structural integrity.]",
+      "feedback_2": "Hazard Simulation Error, Refinement Suggestion: Enhance the visibility of the chair leg's damage by adding a clear, high-contrast visual break (e.g., a visible split or jagged line) in the leg to unambiguously demonstrate structural compromise."
+    },
+    "state": "failed"
+  }
+]

@@ -3,6 +3,7 @@ import json
 import argparse
 import traceback
 import threading
+import sys
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
@@ -12,101 +13,113 @@ from nodes.fidelity_verifier import FidelityVerifier
 from nodes.hazard_verifier import HazardVerifier
 from nodes.scene_editor import SceneEditor
 
-from utils import extract_and_plot_principles, proxy_off, proxy_on
+from utils import extract_and_plot_principles, proxy_off, proxy_on, extract_principle_id
+from principle_tracker import PrincipleTracker
 
 class RiskWeaverPipeline:
     def __init__(self, args):
         self.args = args
         self.max_retries = args.max_retries
-        
-        # Initialize Agents
-        self.planner = EditingPlanner(args.planner_model)
-        
+
+        # Initialize PrincipleTracker for balanced generation
+        checkpoint_path = os.path.join("data", args.hazard_type, "principle_checkpoint.json")
+        self.principle_tracker = PrincipleTracker(
+            max_per_principle=args.max_per_principle,
+            checkpoint_path=checkpoint_path
+        )
+
+        # Initialize Agents with principle tracker
+        self.planner = EditingPlanner(args.planner_model, principle_tracker=self.principle_tracker)
+
         # Determine if the editor is local
         is_local_editor = os.path.exists(args.editor_model)
         self.editor = SceneEditor(args.editor_model, local_model=is_local_editor)
-        
+
         self.fidelity_critic = FidelityVerifier(args.fidelity_model)
         self.hazard_detective = HazardVerifier(args.detector_model)
+
+        # Thread-safe lock for principle counting
+        self._stop_flag = False
 
     def process_image(self, image_path, scene_type):
         """
         Implements the Verify-Refine Loop for a single image.
         """
+        # Check if all principles have reached quota
+        if not self.principle_tracker.is_principle_available(self.args.hazard_type):
+            print(f"✅ All safety principles have reached the maximum quota ({self.args.max_per_principle})")
+            print("Stopping pipeline...")
+            with threading.Lock():
+                self._stop_flag = True
+            return None
+
         meta_info = {image_path: scene_type}
-        
+
         # 1. Risk Architect (EditingPlanner) - Planning
         try:
-            # We pass current_feedback to the planner if it's a retry (Reflector logic)
             editing_item = self.planner.generate_edit_plan(image_path, self.args.hazard_type, meta_info)
-            if editing_item['safety_risk'] is None:
-                return editing_item
+            # Check if planning failed due to no available principles
+            if editing_item is None or editing_item.get('safety_risk') is None:
+                return None
         except Exception as e:
             print(f"[-] Planning failed for {image_path}: {e}")
             return None
-        
+
         current_feedback = None
         for attempt in range(0, self.max_retries):
             # 2. Scene Editor Agent - Execution
             try:
-                edited_item = self.editor.edit_scene(editing_item, self.args.hazard_type, 
+                edited_item = self.editor.edit_scene(editing_item, self.args.hazard_type,
                                                      current_feedback, attempt)
             except Exception as e:
                 print(f"[-] Scene Editing failed for {image_path}: {e}")
                 return None
-                # continue
 
             # 3. Dual Verification Mechanism
             # 3a. Physics Critic (FidelityVerifier)
             edit_img_path = edited_item['safety_risk'].get('edit_image_path')
             fidelity_res = self.fidelity_critic.validate_image(edit_img_path)
             if "REJECTED" in fidelity_res:
-                current_feedback = f"Image Fidelity Error, Refinement Suggestion{fidelity_res.split('REJECTED')[-1]}"
+                current_feedback = f"Image Fidelity Error, Original Editing Plan: {risk_data['editing_plan']} Refinement Suggestion{fidelity_res.split('REJECTED')[-1]}"
                 print(f"[!] Attempt {attempt} Rejected for {os.path.basename(image_path)}: {current_feedback}")
                 risk_data[f"feedback_{attempt}"] = current_feedback
-                # continue
-                edited_item["state"]="failed"
-                return edited_item
+                continue
 
             # 3b. Risk Detective (HazardVerifier)
-            # This updates edited_item['safety_risk']['hazard_check'] internally
-            # We simulate the process_single_item logic here
             from PIL import Image
             risk_data = edited_item["safety_risk"]
             pil_img = Image.open(edit_img_path).convert("RGB")
-            
+
             # Prepare objects to detect based on hazard type
             objects_to_detect = self._get_objects_to_detect(risk_data)
             detective_res = self.hazard_detective.verify_object(edit_img_path, pil_img, objects_to_detect, risk_data, self.args.hazard_type)
-            
+
             if "REJECTED" in detective_res:
-                current_feedback = f"{detective_res.split('REJECTED:')[-1]}, Refinement Suggestion: add missing objects in this description: {risk_data['editing_plan']}"
+                current_feedback = f"{detective_res.split('REJECTED:')[-1]}, Original Editing Plan: {risk_data['editing_plan']} Refinement Suggestion: add missing objects."
                 risk_data[f"feedback_{attempt}"] = current_feedback
-                # print(f"[!] Attempt {attempt} Rejected for {os.path.basename(image_path)}: {current_feedback}")
                 continue
-                # edited_item["state"]="failed"
-                # return edited_item
-            
+
             annotate_img_path = edit_img_path.replace('edit_image', 'annotate_image')
             anno_pil_img = Image.open(annotate_img_path).convert("RGB")
             state_res = self.hazard_detective.verify_state(anno_pil_img, risk_data, self.args.hazard_type)
 
             # 4. Decision: Pass Both Checks?
             if "REJECTED" in state_res:
-                # Reflector Agent / Feedback Mechanism
-                # Collect reasons for failure to pass back to the Planner in next loop
                 current_feedback = f"Hazard Simulation Error, Refinement Suggestion{state_res.split('REJECTED')[-1]}"
                 risk_data[f"feedback_{attempt}"] = current_feedback
-                # print(f"[!] Attempt {attempt} Rejected for {os.path.basename(image_path)}: {current_feedback}")
-                # edited_item["state"]="failed"
-                # return edited_item
             else:
-                edited_item["state"]="successed"
+                edited_item["state"] = "successful"
+                # Increment principle counter after successful generation
+                risk_data = editing_item["safety_risk"]
+                safety_principle_text = risk_data.get("safety_principle", "")
+                principle_id = extract_principle_id(safety_principle_text)
+                if principle_id is not None:
+                    self.principle_tracker.increment(self.args.hazard_type, principle_id)
                 return edited_item
-        
+
         print(f"[Failed!] {os.path.basename(image_path)}: {current_feedback}")
-        edited_item["state"]="failed"
-        return edited_item # Failed after max retries
+        edited_item["state"] = "failed"
+        return edited_item
 
     def _get_objects_to_detect(self, risk_data):
         objects = []
@@ -132,6 +145,8 @@ def main():
     parser.add_argument('--fidelity_model', type=str, default="Qwen/Qwen3-VL-235B-A22B-Thinking")
     parser.add_argument('--max_workers', type=int, default=16)
     parser.add_argument('--max_retries', type=int, default=3)
+    parser.add_argument('--max_per_principle', type=int, default=50,
+                        help='Maximum samples per safety principle (default: 50)')
     args = parser.parse_args()
 
     if os.path.exists(args.editor_model):
@@ -163,19 +178,28 @@ def main():
     final_results = []
 
     print(f"🚀 Starting Risk-Weaver Pipeline with {args.max_workers} workers. Processing {len(image_tasks)} images in total...")
+    print(f"📊 Maximum {args.max_per_principle} samples per safety principle")
     proxy_on()
-    import ipdb; ipdb.set_trace()
-    pipeline.process_image(*image_tasks[0])
-    image_tasks = image_tasks[:100]
+
+    image_tasks = image_tasks[:200]
     try:
         with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
             future_to_path = {
-                executor.submit(pipeline.process_image, path, stype): path 
+                executor.submit(pipeline.process_image, path, stype): path
                 for path, stype in image_tasks
             }
-            
+
             with tqdm(total=len(image_tasks), desc="Processing Pipeline") as pbar:
                 for future in as_completed(future_to_path):
+                    # Check if we should stop
+                    if pipeline._stop_flag:
+                        print("🛑 Stop flag detected, cancelling remaining tasks...")
+                        # Cancel remaining futures
+                        for f in future_to_path:
+                            if not f.done():
+                                f.cancel()
+                        break
+
                     result = future.result()
                     if result is not None:
                         final_results.append(result)

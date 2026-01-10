@@ -100,7 +100,7 @@ class HazardVerifier:
 
     def detect(self, image, label, risk_info, hazard_type):
         """
-        直接调用 Qwen 进行 Grounding 获取最相关的 bbox
+        Directly call Qwen for Grounding to get the most relevant bbox
         """
         base64_image = image_to_base64(image)
 
@@ -137,10 +137,10 @@ class HazardVerifier:
                 response = self.client.chat.completions.create(
                     model=self.detector,
                     messages=messages,
-                    temperature=0.0, # Grounding 任务建议低采样
+                    temperature=0.0, # Low temperature recommended for Grounding tasks
                 ).choices[0].message.content
 
-                # 处理 Thinking 模型的输出
+                # Handle Thinking model output
                 if "</think>" in response:
                     response = response.split('</think>')[-1].strip()
                 
@@ -157,27 +157,27 @@ class HazardVerifier:
 
     def verify_object(self, image_path, pil_image, objects_to_detect, risk, hazard_type):
         """
-        循环对象列表，直接使用 Qwen 获取坐标
+        Loop through object list, directly use Qwen to get coordinates
         """
-        all_detected_boxes = [] # 用于最后的可视化展示
+        all_detected_boxes = [] # For final visualization
 
         for role, obj_label in objects_to_detect:
-            # 直接调用 Qwen Grounding
+            # Directly call Qwen Grounding
             final_box = self.detect(pil_image, obj_label, risk, hazard_type)
-            
+
             if final_box is None:
                 error_info = f"REJECTED: [Missing Hazard-Related Area] {role}: {obj_label}"
                 return error_info
-            
-            # 保存坐标
+
+            # Save coordinates
             if role == "hazard_area":
                 risk["bbox_annotation"][obj_label] = final_box
             else:
                 risk["bbox_annotation"][role][obj_label] = final_box
-            
+
             all_detected_boxes.append({"label": obj_label, "bounding_box": final_box})
-                    
-        # --- 可视化与保存 ---
+
+        # --- Visualization and save ---
         save_path = image_path.replace('edit_image', 'annotate_image')
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
@@ -232,33 +232,33 @@ class HazardVerifier:
 
 def process_single_item(item, verifier, hazard_type):
     """
-    处理单个数据项的逻辑函数
+    Logic function to process a single data item
     """
     risk = item["safety_risk"]
-    
-    # 过滤条件
+
+    # Filter conditions
     if risk is None or 'rejected' in risk['fidelity_check'].lower():
         return item, "Skipped (Fidelity)"
 
     image_path = os.path.join("data", risk["edit_image_path"])
     if not image_path or not os.path.exists(image_path):
         raise FileNotFoundError(f"Skipped (File not found: {image_path}")
-        
-    # 处理图像
+
+    # Process image
     pil_image = Image.open(image_path).convert("RGB")
     objects_to_detect = []
     hazard_objs = risk["hazard_related_area"]
 
-    # 构建检测列表
+    # Build detection list
     if hazard_type.lower() == "environmental":
         risk["bbox_annotation"] = {}
-        # 假设 hazard_objs 在 environmental 下是列表
+        # Assume hazard_objs is a list under environmental
         for obj_name in hazard_objs:
             objects_to_detect.append(("hazard_area", obj_name))
     else:
         target_objs = hazard_objs.get("target_object", [])
         constraint_objs = hazard_objs.get("constraint_object", [])
-        
+
         risk["bbox_annotation"] = {
             "target_object": {},
             "constraint_object": {}
@@ -270,10 +270,10 @@ def process_single_item(item, verifier, hazard_type):
             for name in constraint_objs:
                 objects_to_detect.append(("constraint_object", name))
 
-    # --- 第一步：标注 BBox ---
+    # --- Step 1: Annotate BBox ---
     risk["hazard_check"] = verifier.verify_object(image_path, pil_image, objects_to_detect, risk, hazard_type)
 
-    # --- 第二步：检查空间关系 ---
+    # --- Step 2: Check spatial relationships ---
     if risk["hazard_check"] == "ACCEPTED":
         risk["hazard_check"] = verifier.verify_state(pil_image, risk, hazard_type)
     
@@ -285,9 +285,9 @@ def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_wor
     # else:
     #     proxy_on()
         
-    # 初始化验证器
-    # 注意：如果 HazardVerifier 内部涉及 GPU 模型，请确保它是线程安全的，
-    # 或者将 max_workers 设置为较小的值以防显存溢出。
+    # Initialize verifier
+    # Note: If HazardVerifier involves GPU models internally, ensure it is thread-safe,
+    # or set max_workers to a smaller value to prevent GPU memory overflow.
     verifier = HazardVerifier(detector_name)
 
     with open(meta_file_path, 'r', encoding='utf-8') as f:
@@ -307,11 +307,11 @@ def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_wor
             for i, item in enumerate(data)
         }
 
-        with tqdm(total=len(data), desc="🖼️ 验证图像中") as pbar:
+        with tqdm(total=len(data), desc="🖼️ Verifying images") as pbar:
             for future in as_completed(future_to_item):
                 idx = future_to_item[future]
                 try:
-                    # 获取结果（item 会被原位修改，因为它是 mutable 的）
+                    # Get result (item will be modified in-place as it is mutable)
                     _, status = future.result()
                 except Exception as e:
                     error_info = {"index": idx, "error": str(e)}
@@ -320,15 +320,15 @@ def verify_hazard(meta_file_path, save_path, detector_name, hazard_type, max_wor
                 finally:
                     pbar.update(1)
 
-    # 打印错误摘要
+    # Print error summary
     if failed_items:
-        print(f"⚠️ Totally {len(failed_items)} failure case.")
+        print(f"⚠️ Totally {len(failed_items)} failure cases.")
 
-    # 保存结果
+    # Save results
     with open(save_path, "w", encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    
-    print(f"✅ 处理完成，结果已保存至: {save_path}")
+
+    print(f"✅ Processing complete, results saved to: {save_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

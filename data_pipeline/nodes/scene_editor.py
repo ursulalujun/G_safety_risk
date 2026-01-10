@@ -276,19 +276,19 @@ if __name__ == "__main__":
             for i, plan in enumerate(editing_plan)
         }
 
-        with tqdm(total=len(editing_plan), desc="🖼️ 处理图像") as pbar:
+        with tqdm(total=len(editing_plan), desc="🖼️ Processing images") as pbar:
             for future in as_completed(future_to_index):
                 idx = future_to_index[future] 
                 try:
                     res = future.result()
                     results[idx] = res 
                 except Exception as e:
-                    print(f"❌ 索引 {idx} 处理出错: {e}")
+                    print(f"❌ Error processing index {idx}: {e}")
                     # results[idx] = {"error": str(e), "status": "failed"} 
                 finally:
                     pbar.update(1)
 
-    print("✅ 所有图片编辑完成！")
+    print("✅ All images edited!")
 
     results = [r for r in results if r is not None] 
     with open(f'{args.hazard_type}/edition_info.json', 'w') as f:
